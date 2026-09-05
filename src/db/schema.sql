@@ -126,11 +126,8 @@ CREATE TABLE IF NOT EXISTS scouted_products (
 CREATE INDEX IF NOT EXISTS idx_variants_product_id    ON variants(product_id);
 CREATE INDEX IF NOT EXISTS idx_orders_ebay_order_id   ON orders(ebay_order_id);
 CREATE INDEX IF NOT EXISTS idx_sync_logs_run_at        ON sync_logs(run_at);
--- Task 8: fulfillment loop queries orders by status; quarantined orders need fast lookup too.
+-- Task 8: fulfillment loop queries orders by status; partial index for quarantine lookup.
 CREATE INDEX IF NOT EXISTS idx_orders_status           ON orders(status);
-CREATE INDEX IF NOT EXISTS idx_orders_quarantined      ON orders(quarantined) WHERE quarantined = 1;
--- Task 8: quarantine dashboard query filters variant_failures by quarantined=1.
-CREATE INDEX IF NOT EXISTS idx_variant_failures_quarantined ON variant_failures(quarantined) WHERE quarantined = 1;
 
 -- scrapers: external scraping services Core pulls trending candidates from.
 -- Connected by pasting a single connection token from the scraper dashboard.
@@ -197,3 +194,9 @@ CREATE TABLE IF NOT EXISTS ai_providers (
   created_at     TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Task 8: partial indexes — must appear after the tables they reference.
+-- Quarantined-order lookup (fulfillment loop exclusion + dashboard query).
+CREATE INDEX IF NOT EXISTS idx_orders_quarantined ON orders(quarantined) WHERE quarantined = 1;
+-- Quarantined-variant lookup (sync loop skip + dashboard query).
+CREATE INDEX IF NOT EXISTS idx_variant_failures_quarantined ON variant_failures(quarantined) WHERE quarantined = 1;

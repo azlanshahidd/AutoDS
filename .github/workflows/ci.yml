@@ -1,0 +1,103 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# CI — runs on every push and every pull-request targeting master.
+#
+# Jobs (sequential, each depends on the previous passing):
+#   typecheck  → tsc --noEmit
+#   test       → vitest run (unit + integration, coverage reported)
+#
+# No lint job: the project doesn't have ESLint configured yet.
+# Add an "eslint" step here once it's set up.
+#
+# The test job uploads a coverage summary as an artifact so PR reviewers
+# can see coverage without running locally. It does NOT enforce the
+# threshold here — Vitest enforces it inline (vitest.config.ts thresholds
+# will exit non-zero if coverage drops below the floor).
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]           # every branch push triggers CI
+  pull_request:
+    branches: [master, staging] # PRs targeting master or staging are checked
+
+# Cancel any in-progress run on the same branch when a new push arrives.
+# Prevents queued runs from wasting minutes on superseded commits.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── 1. Type check ────────────────────────────────────────────────────────────
+  typecheck:
+    name: TypeScript typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install backend dependencies
+        # Skip the postinstall frontend install in CI — we only need backend
+        run: npm ci --ignore-scripts
+
+      - name: Run tsc --noEmit
+        run: npm run typecheck
+
+  # ── 2. Tests + coverage ──────────────────────────────────────────────────────
+  test:
+    name: Vitest (unit + integration)
+    runs-on: ubuntu-latest
+    needs: typecheck          # only run if typecheck passed
+
+    # Minimal env for tests — no real credentials needed.
+    # Tests use in-memory SQLite and TestPlugin (no network calls).
+    env:
+      NODE_ENV: test
+      # Required by loadConfig() even though tests don't call it directly
+      # (migrate.ts imports config at module load time in some paths).
+      DASHBOARD_AUTH_TOKEN: ci-test-token-not-real
+      ENCRYPTION_KEY: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install backend dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        # Always upload so PRs get a coverage artifact even on partial failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+      - name: Post coverage summary to job summary
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            echo "## Coverage Summary" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            node -e "
+              const s = require('./coverage/coverage-summary.json').total;
+              const fmt = (k) => \`\${k.padEnd(12)} \${s[k].pct.toFixed(1).padStart(6)}%\`;
+              ['lines','statements','functions','branches'].forEach(k => console.log(fmt(k)));
+            " >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi

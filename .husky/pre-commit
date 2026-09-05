@@ -1,0 +1,23 @@
+#!/bin/sh
+# Pre-commit hook — runs before every commit.
+#
+# Steps:
+#   1. TypeScript typecheck (tsc --noEmit) — catches type errors instantly.
+#   2. Full test suite (vitest run) — blocks commits that break existing tests.
+#
+# To bypass in a genuine emergency (never for normal work):
+#   git commit --no-verify -m "emergency: ..."
+#
+# Note: this runs the full test suite, not just changed files, because the
+# integration tests exercise the DB schema and job loops end-to-end. A change
+# to schema.sql could break a test in a completely unrelated file.
+
+set -e
+
+echo "[pre-commit] Running typecheck..."
+npm run typecheck
+
+echo "[pre-commit] Running test suite..."
+npm run test
+
+echo "[pre-commit] All checks passed."

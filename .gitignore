@@ -26,3 +26,9 @@ logs/*.log.*
 Thumbs.db
 *.swp
 *.swo
+
+# Test coverage output
+coverage/
+
+# Husky internal bootstrap directory (not a hook, not needed in repo)
+.husky/_/

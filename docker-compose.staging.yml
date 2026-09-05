@@ -1,0 +1,86 @@
+# ============================================================
+# Core Service — LOCAL STAGING STACK
+# ============================================================
+# Mirrors production (single-container, SQLite, same Dockerfile)
+# with three hard differences that make it safe to run locally:
+#
+#   1. AUTO_ORDER_ENABLED=false  — no real orders ever placed
+#   2. EBAY_ENVIRONMENT=sandbox  — eBay sandbox API only
+#   3. Separate named volume     — never touches production core.db
+#
+# Usage:
+#   cp .env.staging .env.staging.local    # fill in real sandbox credentials
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging.local up --build
+#
+# Dashboard: http://localhost:4000
+# Stop:      docker compose -f docker-compose.staging.yml down
+# Wipe DB:   docker compose -f docker-compose.staging.yml down -v
+# ============================================================
+
+services:
+  core-staging:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: core-service-staging
+    restart: unless-stopped
+
+    # ── Ports ────────────────────────────────────────────────
+    # Map to 4001 so a local production instance on 4000 can
+    # run side-by-side without collision.
+    ports:
+      - "4001:4000"
+
+    # ── Environment ──────────────────────────────────────────
+    # Values here are safe defaults. Secrets come from the
+    # --env-file you pass on the command line (never committed).
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      HOST: "0.0.0.0"
+
+      # ── SAFETY SWITCHES — never change these on staging ────
+      AUTO_ORDER_ENABLED: "false"
+      EBAY_ENVIRONMENT: sandbox
+
+      # ── Paths inside the container ─────────────────────────
+      DATABASE_FILE: ./data/core-staging.db
+      LOG_FILE: ./logs/core-staging.log
+      VERO_BLOCKLIST_PATH: ./config/vero-blocklist.txt
+
+      # ── Timing / guardrails ────────────────────────────────
+      SAFETY_STOCK_BUFFER: "5"
+      SYNC_INTERVAL_MINUTES: "15"
+      ALERT_FAILURE_THRESHOLD: "3"
+
+      # ── Secrets — injected via --env-file at runtime ───────
+      # (leave these blank here; the env-file overrides them)
+      DASHBOARD_AUTH_TOKEN: ""
+      ENCRYPTION_KEY: ""
+      EBAY_CLIENT_ID: ""
+      EBAY_CLIENT_SECRET: ""
+      EBAY_REFRESH_TOKEN: ""
+      CJ_API_KEY: ""
+      CJ_API_SECRET: ""
+      ACTIVE_SUPPLIER: "TEST"
+
+    # ── Volumes ───────────────────────────────────────────────
+    # core-staging-data is a SEPARATE named volume from any
+    # production mount — it will never share data with prod.
+    volumes:
+      - core-staging-data:/app/data
+      - core-staging-logs:/app/logs
+
+    # ── Health check (same path as Railway config) ────────────
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  core-staging-data:
+    name: core-service-staging-data   # explicit name avoids collisions with prod volumes
+  core-staging-logs:
+    name: core-service-staging-logs

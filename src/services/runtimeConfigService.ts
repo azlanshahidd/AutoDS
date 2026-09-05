@@ -92,6 +92,8 @@ export interface CoreSettings {
   seoAutoRegenerate: boolean;
   // Analytics
   marginFloorPercent: number;
+  // Pricing tiers (JSON array of PricingTier objects — see pricing.ts)
+  pricingTiersJson: string;
 }
 
 export function getSettings(db: Database.Database, bootConfig: CoreConfig): CoreSettings {
@@ -135,6 +137,7 @@ export function getSettings(db: Database.Database, bootConfig: CoreConfig): Core
     alertFailureThreshold: num("ALERT_FAILURE_THRESHOLD",   bootConfig.alertFailureThreshold),
     seoAutoRegenerate:     bool("AUTO_REGENERATE_SEO_ON_CHANGE", true),
     marginFloorPercent:    num("MARGIN_FLOOR_PERCENT", 0.10),
+    pricingTiersJson:      str("PRICING_TIERS", "[]"),
   };
 }
 
@@ -165,6 +168,16 @@ export function patchSettings(db: Database.Database, patch: SettingsPatch): void
     alertFailureThreshold: (v) => String(Math.max(1, Math.round(Number(v)))),
     seoAutoRegenerate:     (v) => String(Boolean(v)),
     marginFloorPercent:    (v) => String(Math.min(1, Math.max(0, Number(v)))),
+    pricingTiersJson:      (v) => {
+      // Validate that the value is parseable JSON array before storing.
+      // Silently fall back to "[]" if the client sends garbage.
+      try {
+        const parsed = JSON.parse(String(v ?? "[]"));
+        return Array.isArray(parsed) ? JSON.stringify(parsed) : "[]";
+      } catch {
+        return "[]";
+      }
+    },
   };
 
   const dbKeyMap: Record<keyof CoreSettings, string> = {
@@ -191,6 +204,7 @@ export function patchSettings(db: Database.Database, patch: SettingsPatch): void
     alertFailureThreshold: "ALERT_FAILURE_THRESHOLD",
     seoAutoRegenerate:     "AUTO_REGENERATE_SEO_ON_CHANGE",
     marginFloorPercent:    "MARGIN_FLOOR_PERCENT",
+    pricingTiersJson:      "PRICING_TIERS",
   };
 
   for (const [field, value] of Object.entries(patch) as [keyof CoreSettings, unknown][]) {

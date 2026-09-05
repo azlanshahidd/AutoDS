@@ -2,6 +2,7 @@ import { useEffect, useState, FormEvent, ReactNode } from "react";
 import {
   ShoppingBag, Zap, Bell, Link2, DollarSign, Save, RefreshCw,
   Eye, EyeOff, AlertTriangle, Server, Lock, Truck, Search,
+  Plus, Trash2,
 } from "lucide-react";
 import { PageHeader } from "../components/AppShell";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/Card";
@@ -76,6 +77,177 @@ function NumInput({ value, onChange, step = 1, min = 0, w = "w-32" }: {
     <input type="number" step={step} min={min} value={value}
       onChange={e => onChange(parseFloat(e.target.value) || 0)}
       className={cn("input", w)} />
+  );
+}
+
+// ── Pricing tiers section ────────────────────────────────────────────────────
+
+/**
+ * Inline editor for PRICING_TIERS — a JSON array of cost-bracket rules stored
+ * in the config table. Lets operators define different margins per cost range,
+ * e.g. 60% for items under $10, 30% for $10–$50, 20% above $50.
+ *
+ * Priority in the pricing formula: matching tier > per-supplier override > global margin.
+ */
+
+interface PricingTier {
+  maxCost:       number;
+  marginPercent: number;
+  flatMarkup:    number;
+}
+
+function parseTiers(raw: string): PricingTier[] {
+  try {
+    const parsed = JSON.parse(raw || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((t): t is PricingTier =>
+        t && typeof t === "object" &&
+        typeof t.maxCost === "number" &&
+        typeof t.marginPercent === "number"
+      )
+      .map(t => ({ maxCost: t.maxCost, marginPercent: t.marginPercent, flatMarkup: t.flatMarkup ?? 0 }));
+  } catch { return []; }
+}
+
+function stringifyTiers(tiers: PricingTier[]): string {
+  return JSON.stringify(tiers);
+}
+
+function PricingTiersSection({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [tiers, setTiers] = useState<PricingTier[]>(() => parseTiers(value));
+
+  // Sync outward whenever tiers change
+  useEffect(() => {
+    onChange(stringifyTiers(tiers));
+  }, [tiers]); // eslint-disable-line
+
+  // Sync inward only on initial load / external reset
+  useEffect(() => {
+    const parsed = parseTiers(value);
+    // Compare JSON to avoid loops
+    if (JSON.stringify(parsed) !== JSON.stringify(tiers)) {
+      setTiers(parsed);
+    }
+  }, [value]); // eslint-disable-line
+
+  function addTier() {
+    const lastMaxCost = tiers.length > 0 ? tiers[tiers.length - 1].maxCost : 0;
+    setTiers(prev => [
+      ...prev,
+      { maxCost: lastMaxCost + 10, marginPercent: 0.35, flatMarkup: 0 },
+    ]);
+  }
+
+  function removeTier(idx: number) {
+    setTiers(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  function updateTier(idx: number, field: keyof PricingTier, raw: string) {
+    const num = parseFloat(raw);
+    if (isNaN(num)) return;
+    setTiers(prev => prev.map((t, i) =>
+      i === idx ? { ...t, [field]: field === "marginPercent" ? num / 100 : num } : t
+    ));
+  }
+
+  // Live example using the first tier (or global margin placeholder)
+  const exampleCost = tiers.length > 0 ? Math.min(tiers[0].maxCost * 0.6, tiers[0].maxCost) : 8;
+  const exampleTier = tiers.find(t => exampleCost <= t.maxCost);
+
+  return (
+    <Sec
+      icon={DollarSign}
+      title="Pricing Tiers"
+      desc="Per-cost-bracket margins. Tier rules take priority over per-supplier overrides and the global margin."
+    >
+      {tiers.length === 0 ? (
+        <p className="text-sm text-ink-4">
+          No tiers configured — the global profit margin applies to all items.
+          Add a tier to charge different margins based on supplier cost.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {/* Column headers */}
+          <div className="grid items-center gap-2 text-xs font-medium text-ink-5"
+            style={{ gridTemplateColumns: "1fr 1fr 1fr auto" }}>
+            <span>Max total cost ($)</span>
+            <span>Margin (%)</span>
+            <span>Flat markup ($)</span>
+            <span />
+          </div>
+
+          {tiers.map((tier, idx) => {
+            const prevMax = idx > 0 ? tiers[idx - 1].maxCost : 0;
+            return (
+              <div key={idx} className="grid items-center gap-2"
+                style={{ gridTemplateColumns: "1fr 1fr 1fr auto" }}>
+                {/* Max cost */}
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-ink-5">$</span>
+                  <input type="number" step="1" min={prevMax + 0.01}
+                    value={tier.maxCost}
+                    onChange={e => updateTier(idx, "maxCost", e.target.value)}
+                    className="input pl-6 text-sm font-mono"
+                    title={`Items with cost ≤ $${tier.maxCost} use this margin`} />
+                </div>
+                {/* Margin % */}
+                <div className="relative">
+                  <input type="number" step="0.1" min="0" max="500"
+                    value={(tier.marginPercent * 100).toFixed(1)}
+                    onChange={e => updateTier(idx, "marginPercent", e.target.value)}
+                    className="input pr-7 text-sm font-mono" />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-ink-5">%</span>
+                </div>
+                {/* Flat markup */}
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-ink-5">$</span>
+                  <input type="number" step="0.01" min="0"
+                    value={tier.flatMarkup}
+                    onChange={e => updateTier(idx, "flatMarkup", e.target.value)}
+                    className="input pl-6 text-sm font-mono" />
+                </div>
+                {/* Remove */}
+                <button type="button" onClick={() => removeTier(idx)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-danger/70 hover:bg-danger/10 hover:text-danger transition-colors"
+                  title="Remove tier">
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            );
+          })}
+
+          {/* Fallback note */}
+          <p className="text-xs text-ink-5 pt-1">
+            Items with cost exceeding the highest tier fall back to the global / per-supplier margin.
+          </p>
+        </div>
+      )}
+
+      <button type="button" onClick={addTier}
+        className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-cyan transition-colors hover:bg-cyan/10"
+        style={{ border: "1px solid rgba(6,182,212,0.25)" }}>
+        <Plus size={12} />Add tier
+      </button>
+
+      {/* Live formula preview for the first tier */}
+      {tiers.length > 0 && exampleTier && (
+        <div className="rounded-lg px-3.5 py-3 text-xs font-mono text-ink-3"
+          style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <span className="text-ink-5">Example — cost ${exampleCost.toFixed(2)}: </span>
+          price = (${exampleCost.toFixed(2)} + shipping) × {(1 + exampleTier.marginPercent).toFixed(2)}
+          {exampleTier.flatMarkup > 0 && ` + $${exampleTier.flatMarkup.toFixed(2)}`}
+          {" + eBay fee"}
+        </div>
+      )}
+
+      <div className="rounded-lg px-3.5 py-3 text-xs text-ink-3"
+        style={{ background: "rgba(6,182,212,0.07)", border: "1px solid rgba(6,182,212,0.15)" }}>
+        <strong className="text-ink-3">Tier priority:</strong>{" "}
+        matching tier &gt; per-supplier override (Suppliers page) &gt; global margin above.
+        Tiers apply to <em>total cost</em> (unit cost + shipping cost).
+      </div>
+    </Sec>
   );
 }
 
@@ -339,6 +511,12 @@ export function SettingsPage() {
               </Row>
             </div>
           </Sec>
+
+          {/* Pricing Tiers */}
+          <PricingTiersSection
+            value={draft.pricingTiersJson ?? "[]"}
+            onChange={v => set("pricingTiersJson", v)}
+          />
 
           {/* Sync & Guardrails */}
           <Sec icon={Zap} title="Sync & Guardrails" desc="How often syncs run and how inventory is protected.">

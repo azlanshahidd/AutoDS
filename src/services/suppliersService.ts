@@ -262,6 +262,9 @@ export class SuppliersService {
   /**
    * Updates only the pricing override fields, without re-testing credentials.
    * Accepts null to clear an override (revert to global config value).
+   *
+   * Bug fix: previously used COALESCE(?, existing) which meant null never
+   * cleared the column. Direct assignment handles null correctly in SQLite.
    */
   setPricingOverrides(
     id: number,
@@ -270,8 +273,8 @@ export class SuppliersService {
     this.getRow(id); // throws SupplierNotFoundError if missing
     this.db.prepare(
       `UPDATE suppliers
-         SET margin_override = COALESCE(?, margin_override),
-             fee_override    = COALESCE(?, fee_override),
+         SET margin_override = ?,
+             fee_override    = ?,
              updated_at      = datetime('now')
        WHERE id = ?`
     ).run(

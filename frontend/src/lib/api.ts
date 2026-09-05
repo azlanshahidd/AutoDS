@@ -211,6 +211,13 @@ export interface CoreSettings {
   alertFailureThreshold: number;
   seoAutoRegenerate: boolean;
   marginFloorPercent: number;
+  /**
+   * JSON array of PricingTier objects stored as a string.
+   * Each tier: { maxCost: number, marginPercent: number, flatMarkup?: number }
+   * Empty array = no tier rules (use global/supplier margin).
+   * Priority when tiers present: matching tier > supplier override > global.
+   */
+  pricingTiersJson: string;
 }
 
 export interface ServerInfo {

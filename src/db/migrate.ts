@@ -25,10 +25,26 @@ export function applyMigrations(db: Database.Database, config: CoreConfig): stri
   const schemaPath = path.join(__dirname, "schema.sql");
   const schemaSql = fs.readFileSync(schemaPath, "utf-8");
 
-  const applySchema = db.transaction(() => {
-    db.exec(schemaSql);
+  // Split schema into two passes:
+  //   Pass 1 — table/trigger/view definitions (everything except CREATE INDEX)
+  //   Pass 2 — index definitions (applied AFTER ALTER TABLE column additions so
+  //             partial indexes like idx_orders_quarantined don't fail on an
+  //             existing DB that hasn't had the column added yet)
+  const tableStatements = schemaSql
+    .split(/;\s*\n/)
+    .filter(s => s.trim().length > 0 && !/^\s*CREATE\s+(UNIQUE\s+)?INDEX/i.test(s))
+    .join(";\n") + ";";
+
+  const indexStatements = schemaSql
+    .split(/;\s*\n/)
+    .filter(s => /^\s*CREATE\s+(UNIQUE\s+)?INDEX/i.test(s))
+    .join(";\n");
+
+  // Apply table definitions first
+  const applyTables = db.transaction(() => {
+    db.exec(tableStatements);
   });
-  applySchema();
+  applyTables();
 
   // Idempotent column additions — ALTER TABLE ADD COLUMN fails if the column
   // already exists, so we check PRAGMA table_info first.
@@ -189,6 +205,16 @@ export function applyMigrations(db: Database.Database, config: CoreConfig): stri
       open_until         TEXT,
       updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
     )`).run();
+  }
+
+  // Pass 2 — apply indexes AFTER all ALTER TABLE column additions above,
+  // so partial indexes referencing newly-added columns (e.g. quarantined)
+  // find the column already present on existing databases.
+  if (indexStatements.trim().length > 0) {
+    const applyIndexes = db.transaction(() => {
+      db.exec(indexStatements + ";");
+    });
+    applyIndexes();
   }
 
   // Seed default runtime config (only where not already present).

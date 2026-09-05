@@ -120,7 +120,8 @@ CREATE TABLE IF NOT EXISTS scouted_products (
   image_urls       TEXT,                          -- JSON array of image URL strings
   listing_error    TEXT,                          -- last pipeline error message for display
   scouted_at       TEXT,
-  created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_variants_product_id    ON variants(product_id);

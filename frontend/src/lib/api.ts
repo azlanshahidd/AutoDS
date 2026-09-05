@@ -133,14 +133,41 @@ export interface ScoutedProduct {
   estimated_margin: number | null;
   trend_signal: string | null;
   status: "pending_review" | "approved" | "discarded";
+  /** Listing pipeline status — drives the Publish/Preview UI */
+  listing_status: "none" | "queued" | "vero_blocked" | "quality_fail" | "publishing" | "published" | "failed";
+  ebay_listing_id: string | null;
+  ebay_category_id: string | null;
+  /** JSON-encoded string array of image URLs */
+  image_urls: string | null;
+  listing_error: string | null;
   scouted_at: string;
   created_at: string;
+  updated_at: string;
   ai_title: string | null;
   ai_description: string | null;
   meta_title: string | null;
   meta_description: string | null;
   meta_generated_at: string | null;
   meta_generation_source: string | null;
+}
+
+/** Returned by GET /api/scouted/:id/preview — no side effects */
+export interface ListingPreview {
+  scoutedId:           number;
+  ebayTitle:           string;
+  description:         string;
+  price:               number;
+  categoryId:          string;
+  merchantLocationKey: string;
+  marketplaceId:       string;
+  images:              string[];
+  supplierCost:        number;
+  shippingCost:        number;
+  profitMargin:        number;
+  ebayFeeEstimate:     number;
+  veroCheck:           { isBlocked: boolean; matchedKeywords: string[] };
+  qualityIssues:       string[];
+  canPublish:          boolean;
 }
 
 export interface AiProvider {
@@ -167,6 +194,12 @@ export interface CoreSettings {
   ebayClientSecret: string;
   ebayRefreshToken: string;
   ebayEnvironment: "production" | "sandbox";
+  /** "Review before publish" toggle — false = items queue for human click, true = fully automatic */
+  autoListEnabled: boolean;
+  /** eBay merchant location key (from createEbayLocation) — required for listing */
+  ebayMerchantLocation: string;
+  /** eBay marketplace, e.g. "EBAY_US" */
+  ebayMarketplaceId: string;
   activeSupplier: string;
   cjApiKey: string;
   cjApiSecret: string;
@@ -379,6 +412,38 @@ export const api = {
     method: "DELETE",
     body: JSON.stringify({ confirm: true }),
   }),
+
+  /** Returns exactly what would be sent to eBay — no side effects. */
+  previewListing: (id: number) =>
+    request<ListingPreview>(`/api/scouted/${id}/preview`),
+
+  /**
+   * Runs the full listing pipeline with force:true — bypasses the review queue.
+   * Call this from the "Publish to eBay" button after the operator has
+   * confirmed the preview.
+   */
+  publishListing: (
+    id: number,
+    opts?: { categoryId?: string; imageUrls?: string[] }
+  ) =>
+    request<{ success: boolean; listingId?: string; offerId?: string; ebaySku?: string; price?: number }>(
+      `/api/scouted/${id}/publish`,
+      { method: "POST", body: JSON.stringify(opts ?? {}) }
+    ),
+
+  /** Sets or replaces the eBay category ID on a scouted item. */
+  setCategoryId: (id: number, categoryId: string) =>
+    request<{ id: number; ebay_category_id: string }>(
+      `/api/scouted/${id}/category`,
+      { method: "PATCH", body: JSON.stringify({ categoryId }) }
+    ),
+
+  /** Replaces the image URL list on a scouted item (max 24). */
+  setImageUrls: (id: number, imageUrls: string[]) =>
+    request<{ id: number; image_urls: string[] }>(
+      `/api/scouted/${id}/images`,
+      { method: "PATCH", body: JSON.stringify({ imageUrls }) }
+    ),
 
   deleteLog: (id: number) => request<void>(`/api/logs/${id}`, { method: "DELETE" }),
 

@@ -255,6 +255,47 @@ export function SettingsPage() {
                 ))}
               </div>
             </Row>
+            <Divider />
+            <Row label="Merchant location key"
+              hint="Required for publishing listings. Create one with: npm run ebay-create-location -- --key=my-warehouse ...">
+              <Input value={draft.ebayMerchantLocation ?? ""} onChange={e => set("ebayMerchantLocation", e.target.value)}
+                placeholder="e.g. my-warehouse" className="mt-1 font-mono" />
+            </Row>
+            <Row label="Marketplace ID"
+              hint="eBay marketplace for new listings. EBAY_US for the US marketplace (default).">
+              <Input value={draft.ebayMarketplaceId ?? "EBAY_US"} onChange={e => set("ebayMarketplaceId", e.target.value)}
+                placeholder="EBAY_US" className="mt-1 font-mono" />
+            </Row>
+            <Divider />
+            <Row label="Auto-list approved items"
+              hint={`Off (default): approved Scouted items queue for a final "Publish to eBay" click — you see the preview before anything goes live. On: approved items are immediately published to eBay without a review step. Only turn this on once you trust the AI content quality and pricing.`}>
+              <div className="flex gap-2 mt-1">
+                {([false, true] as const).map(val => (
+                  <button key={String(val)} type="button"
+                    onClick={() => set("autoListEnabled", val)}
+                    className={cn("rounded-lg border px-4 py-1.5 text-sm font-semibold transition-all",
+                      draft.autoListEnabled === val
+                        ? val
+                          ? "border-warning/40 bg-warning/20 text-warning"
+                          : "border-cyan/40 bg-cyan text-white shadow-glow-sm"
+                        : "text-ink-4 hover:bg-surface-2 hover:text-ink-3"
+                    )}
+                    style={(draft.autoListEnabled !== val) ? { border: "1px solid rgba(6,182,212,0.2)" } : {}}>
+                    {val ? "On (auto-publish)" : "Off (review first)"}
+                  </button>
+                ))}
+              </div>
+              {draft.autoListEnabled && (
+                <div className="flex items-start gap-2 mt-2 rounded-lg px-3 py-2"
+                  style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)" }}>
+                  <AlertTriangle size={12} className="text-warning shrink-0 mt-0.5" />
+                  <p className="text-xs text-warning/80">
+                    Auto-list is <strong>on</strong> — approved items will publish to eBay automatically.
+                    Make sure your merchant location, category mappings, and images are correct before approving items.
+                  </p>
+                </div>
+              )}
+            </Row>
           </Sec>
 
           {/* Supplier */}

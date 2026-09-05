@@ -71,6 +71,12 @@ export function applyMigrations(db: Database.Database, config: CoreConfig): stri
   if (!scoutedCols.find((c) => c.name === "meta_generation_source")) {
     db.prepare("ALTER TABLE scouted_products ADD COLUMN meta_generation_source TEXT").run();
   }
+  // updated_at — used by the optimistic-lock approve/discard and the pipeline
+  if (!scoutedCols.find((c) => c.name === "updated_at")) {
+    db.prepare("ALTER TABLE scouted_products ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))").run();
+    // Back-fill existing rows to created_at so the lock works immediately
+    db.prepare("UPDATE scouted_products SET updated_at = created_at WHERE updated_at IS NULL").run();
+  }
 
   // SEO metadata columns on products table — written at publish time from the
   // scouted item's generated meta fields.

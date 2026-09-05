@@ -336,7 +336,24 @@ export function scoutedRouter(db: Database.Database, config: CoreConfig): Router
 
       const row = db.prepare("SELECT status, updated_at FROM scouted_products WHERE id = ?").get(id) as
         | { status: string; updated_at: string } | undefined;
-      res.json({ id, status: "approved", updatedAt: row?.updated_at });
+
+      // Wire approve → listing pipeline when AUTO_LIST_ENABLED=true.
+      // We do this after committing the status change so the item is marked
+      // 'approved' even if the pipeline fails (it will show listing_error).
+      if (getAutoListEnabled(db)) {
+        // Fire-and-forget: don't block the HTTP response on the eBay call.
+        // The frontend polls every 8s and will pick up listing_status changes.
+        setImmediate(() => {
+          runListingPipeline(db, config, id, { force: false }).catch((err: unknown) => {
+            logger.error("Auto-listing pipeline error after approve", {
+              id,
+              error: (err as Error).message,
+            });
+          });
+        });
+      }
+
+      res.json({ id, status: "approved", updatedAt: row?.updated_at, autoListTriggered: getAutoListEnabled(db) });
     } catch (err) {
       logger.error("Failed to approve scouted item", { error: (err as Error).message, id });
       res.status(500).json({ error: "Failed to approve item." });
@@ -394,9 +411,128 @@ export function scoutedRouter(db: Database.Database, config: CoreConfig): Router
     }
   });
 
+  // GET /api/scouted/:id/preview — returns what would be sent to eBay (no side effects)
+  router.get("/:id/preview", async (req: Request, res: Response) => {
+    const id = parseIntId(req.params.id);
+    if (id === null) return res.status(400).json({ error: "id must be a positive integer." });
+
+    try {
+      const preview = await previewListing(db, config, id);
+      if (!preview) return res.status(404).json({ error: "Scouted item not found." });
+      res.json(preview);
+    } catch (err) {
+      logger.error("Failed to build listing preview", { error: (err as Error).message, id });
+      res.status(500).json({ error: "Failed to build listing preview." });
+    }
+  });
+
+  // POST /api/scouted/:id/publish — runs the pipeline with force:true (bypasses review queue)
+  // Body (all optional): { categoryId?: string; imageUrls?: string[] }
+  router.post("/:id/publish", async (req: Request, res: Response) => {
+    const id = parseIntId(req.params.id);
+    if (id === null) return res.status(400).json({ error: "id must be a positive integer." });
+
+    const { categoryId, imageUrls } = req.body || {};
+
+    if (categoryId !== undefined && (typeof categoryId !== "string" || !categoryId.trim())) {
+      return res.status(400).json({ error: "categoryId must be a non-empty string." });
+    }
+    if (imageUrls !== undefined && !Array.isArray(imageUrls)) {
+      return res.status(400).json({ error: "imageUrls must be an array of strings." });
+    }
+
+    try {
+      const result = await runListingPipeline(db, config, id, {
+        force:      true,
+        categoryId: categoryId?.trim(),
+        imageUrls:  imageUrls as string[] | undefined,
+      });
+
+      if (!result.success) {
+        // Map pipeline step to a meaningful HTTP status
+        const status =
+          result.step === "load"            ? 404 :
+          result.step === "guard"           ? 409 :
+          result.step === "vero"            ? 422 :
+          result.step === "vero_meta"       ? 422 :
+          result.step === "quality_gate"    ? 422 :
+          result.step === "ebay_not_configured" ? 503 :
+                                              500;
+        return res.status(status).json({ error: result.error, step: result.step });
+      }
+
+      logger.info("Listing published via dashboard", { id, listingId: result.listingId });
+      res.json(result);
+    } catch (err) {
+      logger.error("Publish pipeline threw unexpectedly", { error: (err as Error).message, id });
+      res.status(500).json({ error: "Publish pipeline failed." });
+    }
+  });
+
+  // PATCH /api/scouted/:id/category — sets or updates the eBay category ID
+  router.patch("/:id/category", (req: Request, res: Response) => {
+    const id = parseIntId(req.params.id);
+    if (id === null) return res.status(400).json({ error: "id must be a positive integer." });
+
+    const { categoryId } = req.body || {};
+    if (!categoryId || typeof categoryId !== "string" || !categoryId.trim()) {
+      return res.status(400).json({ error: "categoryId must be a non-empty string." });
+    }
+
+    try {
+      const result = db
+        .prepare(
+          "UPDATE scouted_products SET ebay_category_id = ?, updated_at = datetime('now') WHERE id = ?"
+        )
+        .run(categoryId.trim(), id);
+      if (result.changes === 0) return res.status(404).json({ error: "Not found." });
+      logger.info("eBay category set", { id, categoryId: categoryId.trim() });
+      res.json({ id, ebay_category_id: categoryId.trim() });
+    } catch (err) {
+      logger.error("Failed to set category", { error: (err as Error).message, id });
+      res.status(500).json({ error: "Failed to set category." });
+    }
+  });
+
+  // PATCH /api/scouted/:id/images — sets the image URL array for a scouted item
+  // Body: { imageUrls: string[] }  — replaces the existing list entirely
+  router.patch("/:id/images", (req: Request, res: Response) => {
+    const id = parseIntId(req.params.id);
+    if (id === null) return res.status(400).json({ error: "id must be a positive integer." });
+
+    const { imageUrls } = req.body || {};
+    if (!Array.isArray(imageUrls)) {
+      return res.status(400).json({ error: "imageUrls must be an array of strings." });
+    }
+    const invalid = (imageUrls as unknown[]).filter(
+      (u) => typeof u !== "string" || !/^https?:\/\//i.test(u)
+    );
+    if (invalid.length > 0) {
+      return res.status(400).json({
+        error: `All imageUrls must be http/https URLs. Invalid: ${(invalid as string[]).slice(0, 3).join(", ")}`,
+      });
+    }
+    if (imageUrls.length > 24) {
+      return res.status(400).json({ error: "eBay allows a maximum of 24 images per listing." });
+    }
+
+    try {
+      const result = db
+        .prepare(
+          "UPDATE scouted_products SET image_urls = ?, updated_at = datetime('now') WHERE id = ?"
+        )
+        .run(JSON.stringify(imageUrls), id);
+      if (result.changes === 0) return res.status(404).json({ error: "Not found." });
+      logger.info("Image URLs updated", { id, count: imageUrls.length });
+      res.json({ id, image_urls: imageUrls });
+    } catch (err) {
+      logger.error("Failed to update image URLs", { error: (err as Error).message, id });
+      res.status(500).json({ error: "Failed to update image URLs." });
+    }
+  });
+
   // DELETE /api/scouted — bulk — P2-015: require {confirm: true}
-  router.delete("/", (req: Request, res: Response) => {
-    const { confirm } = req.body || {};
+  router.delete("/", (req: Request, res: Response) => {    const { confirm } = req.body || {};
     if (confirm !== true) {
       return res.status(400).json({
         error: 'Pass {"confirm": true} in the request body to confirm bulk deletion.',

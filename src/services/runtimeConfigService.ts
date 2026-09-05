@@ -72,6 +72,10 @@ export interface CoreSettings {
   ebayClientSecret: string;
   ebayRefreshToken: string;
   ebayEnvironment: "production" | "sandbox";
+  // eBay listing pipeline
+  autoListEnabled: boolean;
+  ebayMerchantLocation: string;
+  ebayMarketplaceId: string;
   // Supplier
   activeSupplier: string;
   cjApiKey: string;
@@ -117,6 +121,9 @@ export function getSettings(db: Database.Database, bootConfig: CoreConfig): Core
     ebayClientSecret:      str("EBAY_CLIENT_SECRET",        bootConfig.ebayClientSecret ?? ""),
     ebayRefreshToken:      str("EBAY_REFRESH_TOKEN",        bootConfig.ebayRefreshToken ?? ""),
     ebayEnvironment:       (str("EBAY_ENVIRONMENT",         bootConfig.ebayEnvironment)) as "production" | "sandbox",
+    autoListEnabled:       bool("AUTO_LIST_ENABLED",        false),
+    ebayMerchantLocation:  str("EBAY_MERCHANT_LOCATION",    ""),
+    ebayMarketplaceId:     str("EBAY_MARKETPLACE_ID",       "EBAY_US"),
     activeSupplier:        str("ACTIVE_SUPPLIER",           bootConfig.activeSupplier),
     cjApiKey:              str("CJ_API_KEY",                process.env.CJ_API_KEY ?? ""),
     cjApiSecret:           str("CJ_API_SECRET",             process.env.CJ_API_SECRET ?? ""),
@@ -144,6 +151,9 @@ export function patchSettings(db: Database.Database, patch: SettingsPatch): void
     ebayClientSecret:      (v) => String(v ?? ""),
     ebayRefreshToken:      (v) => String(v ?? ""),
     ebayEnvironment:       (v) => (v === "production" ? "production" : "sandbox"),
+    autoListEnabled:       (v) => String(Boolean(v)),
+    ebayMerchantLocation:  (v) => String(v ?? ""),
+    ebayMarketplaceId:     (v) => String(v ?? "EBAY_US"),
     activeSupplier:        (v) => String(v ?? "CJ"),
     cjApiKey:              (v) => String(v ?? ""),
     cjApiSecret:           (v) => String(v ?? ""),
@@ -167,6 +177,9 @@ export function patchSettings(db: Database.Database, patch: SettingsPatch): void
     ebayClientSecret:      "EBAY_CLIENT_SECRET",
     ebayRefreshToken:      "EBAY_REFRESH_TOKEN",
     ebayEnvironment:       "EBAY_ENVIRONMENT",
+    autoListEnabled:       "AUTO_LIST_ENABLED",
+    ebayMerchantLocation:  "EBAY_MERCHANT_LOCATION",
+    ebayMarketplaceId:     "EBAY_MARKETPLACE_ID",
     activeSupplier:        "ACTIVE_SUPPLIER",
     cjApiKey:              "CJ_API_KEY",
     cjApiSecret:           "CJ_API_SECRET",

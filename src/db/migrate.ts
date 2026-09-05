@@ -119,7 +119,35 @@ export function applyMigrations(db: Database.Database, config: CoreConfig): stri
   }
 
   // Reliability Phase — idempotent additions for new tables.
-  // job_locks: DB-backed mutex so concurrent job runs are impossible.
+  // Task 5: order quarantine columns — add to existing orders table for DBs
+  // created before this reliability phase.
+  const orderCols = db
+    .prepare("PRAGMA table_info(orders)")
+    .all() as { name: string }[];
+  if (!orderCols.find((c) => c.name === "fulfillment_failure_count")) {
+    db.prepare("ALTER TABLE orders ADD COLUMN fulfillment_failure_count INTEGER NOT NULL DEFAULT 0").run();
+  }
+  if (!orderCols.find((c) => c.name === "quarantined")) {
+    db.prepare("ALTER TABLE orders ADD COLUMN quarantined INTEGER NOT NULL DEFAULT 0").run();
+  }
+  if (!orderCols.find((c) => c.name === "quarantined_at")) {
+    db.prepare("ALTER TABLE orders ADD COLUMN quarantined_at TEXT").run();
+  }
+  if (!orderCols.find((c) => c.name === "last_fulfillment_error")) {
+    db.prepare("ALTER TABLE orders ADD COLUMN last_fulfillment_error TEXT").run();
+  }
+
+  // Task 6: ebay_push_pending flag on variants — set when local DB is updated
+  // with fresh supplier data, cleared only after a successful eBay bulk push.
+  // Allows the sync loop to retry the eBay push after a crash between the
+  // DB update and the eBay API call (previously the push was silently lost).
+  const variantCols = db
+    .prepare("PRAGMA table_info(variants)")
+    .all() as { name: string }[];
+  if (!variantCols.find((c) => c.name === "ebay_push_pending")) {
+    db.prepare("ALTER TABLE variants ADD COLUMN ebay_push_pending INTEGER NOT NULL DEFAULT 0").run();
+  }
+
   // variant_failures: per-variant failure counting and quarantine flag.
   // circuit_breaker: per-service open/half-open/closed state.
   // These are created by schema.sql via CREATE TABLE IF NOT EXISTS, but

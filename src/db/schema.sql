@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS variants (
   current_price        REAL,
   current_stock        INTEGER,
   last_synced_at       TEXT,
+  -- Task 6: dirty flag — set to 1 when local data is fresher than what eBay
+  -- has. Cleared to 0 only after a successful bulkUpdatePriceQuantity call.
+  -- Ensures a crash between DB update and eBay push is retried next run.
+  ebay_push_pending    INTEGER NOT NULL DEFAULT 0,
   created_at           TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at           TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (supplier_type, supplier_variant_id)
@@ -66,6 +70,13 @@ CREATE TABLE IF NOT EXISTS orders (
                    ),
   tracking_number  TEXT,
   carrier          TEXT,
+  -- Fulfillment dead-letter: consecutive failure counter + quarantine flag.
+  -- After ORDER_QUARANTINE_THRESHOLD failures the order is skipped by the
+  -- fulfillment loop until manually cleared from the dashboard.
+  fulfillment_failure_count  INTEGER NOT NULL DEFAULT 0,
+  quarantined                INTEGER NOT NULL DEFAULT 0 CHECK (quarantined IN (0,1)),
+  quarantined_at             TEXT,
+  last_fulfillment_error     TEXT,
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -112,9 +123,14 @@ CREATE TABLE IF NOT EXISTS scouted_products (
   created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_variants_product_id ON variants(product_id);
-CREATE INDEX IF NOT EXISTS idx_orders_ebay_order_id ON orders(ebay_order_id);
-CREATE INDEX IF NOT EXISTS idx_sync_logs_run_at ON sync_logs(run_at);
+CREATE INDEX IF NOT EXISTS idx_variants_product_id    ON variants(product_id);
+CREATE INDEX IF NOT EXISTS idx_orders_ebay_order_id   ON orders(ebay_order_id);
+CREATE INDEX IF NOT EXISTS idx_sync_logs_run_at        ON sync_logs(run_at);
+-- Task 8: fulfillment loop queries orders by status; quarantined orders need fast lookup too.
+CREATE INDEX IF NOT EXISTS idx_orders_status           ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_quarantined      ON orders(quarantined) WHERE quarantined = 1;
+-- Task 8: quarantine dashboard query filters variant_failures by quarantined=1.
+CREATE INDEX IF NOT EXISTS idx_variant_failures_quarantined ON variant_failures(quarantined) WHERE quarantined = 1;
 
 -- scrapers: external scraping services Core pulls trending candidates from.
 -- Connected by pasting a single connection token from the scraper dashboard.

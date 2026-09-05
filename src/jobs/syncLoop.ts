@@ -41,6 +41,7 @@ interface VariantRow {
   shipping_cost: number | null;
   current_price: number | null;
   current_stock: number | null;
+  ebay_push_pending: number; // 1 = local data is ahead of eBay; push needed
 }
 
 export interface SyncRunSummary {
@@ -152,15 +153,23 @@ export async function runSyncOnce(
         const stockChanged = variant.current_stock === null || variant.current_stock !== effectiveStock;
         const costChanged  = variant.cost === null || Math.abs((variant.cost ?? 0) - fresh.cost) > 0.001;
 
-        // Task 8: wrap each variant's DB update in a transaction
+        // Task 8: wrap each variant's DB update in a transaction.
+        // Task 6: set ebay_push_pending=1 when data changed so a crash
+        // between here and the eBay push is recovered on the next run.
+        const needsEbayPush = (priceChanged || stockChanged) && Boolean(variant.ebay_sku);
         if (!dryRun) {
           db.transaction(() => {
             db.prepare(
               `UPDATE variants
                  SET cost = ?, shipping_cost = ?, current_stock = ?, current_price = ?,
+                     ebay_push_pending = ?,
                      last_synced_at = datetime('now'), updated_at = datetime('now')
                WHERE id = ?`
-            ).run(fresh.cost, fresh.shippingCost, effectiveStock, newPrice, variant.id);
+            ).run(
+              fresh.cost, fresh.shippingCost, effectiveStock, newPrice,
+              needsEbayPush ? 1 : variant.ebay_push_pending, // preserve flag if already set
+              variant.id
+            );
           })();
         }
 
@@ -168,6 +177,16 @@ export async function runSyncOnce(
         if (!dryRun) recordVariantSuccess(db, variant.id);
 
         if (!priceChanged && !stockChanged && !costChanged) {
+          // Task 6: even when nothing changed, if a previous run set
+          // ebay_push_pending=1 (crash between DB update and eBay push),
+          // we must still add this variant to the batch so the push completes.
+          if (!dryRun && variant.ebay_push_pending && variant.ebay_sku && config.autoOrderEnabled) {
+            priceQuantityBatch.push({ sku: variant.ebay_sku, price: newPrice, currency: "USD", quantity: effectiveStock });
+            batchMeta.push({ variantId: variant.id, sku: variant.internal_sku });
+            logger.info("Sync: recovering pending eBay push (no data change, flag set)", {
+              sku: variant.internal_sku,
+            });
+          }
           summary.unchanged += 1;
           continue;
         }
@@ -191,7 +210,15 @@ export async function runSyncOnce(
             logger.info("Sync [DRY RUN]: would push to eBay", {
               sku: variant.internal_sku, price: newPrice, stock: effectiveStock,
             });
-          } else {
+          } else if (needsEbayPush || variant.ebay_push_pending) {
+            // Task 6: include variants that were already pending from a prior
+            // crashed run (ebay_push_pending=1) even if nothing changed this
+            // cycle — ensures the eBay push is never silently lost.
+            if (variant.ebay_push_pending && !needsEbayPush) {
+              logger.info("Sync: recovering pending eBay push from previous run", {
+                sku: variant.internal_sku, price: newPrice, stock: effectiveStock,
+              });
+            }
             priceQuantityBatch.push({ sku: variant.ebay_sku, price: newPrice, currency: "USD", quantity: effectiveStock });
             batchMeta.push({ variantId: variant.id, sku: variant.internal_sku });
           }
@@ -223,7 +250,20 @@ export async function runSyncOnce(
           const ebayClient = buildEbayClient(config);
           for (let i = 0; i < priceQuantityBatch.length; i += 25) {
             const chunk = priceQuantityBatch.slice(i, i + 25);
+            const chunkMeta = batchMeta.slice(i, i + 25);
             await ebayClient.bulkUpdatePriceQuantity(chunk);
+
+            // Task 6: clear ebay_push_pending on each successfully pushed chunk
+            // immediately, so a crash mid-batch only re-pushes the remaining
+            // chunks rather than the whole batch.
+            db.transaction(() => {
+              for (const m of chunkMeta) {
+                db.prepare(
+                  "UPDATE variants SET ebay_push_pending = 0 WHERE id = ?"
+                ).run(m.variantId);
+              }
+            })();
+
             summary.pushedToEbay += chunk.length;
           }
           cbSuccess(db, "EBAY");
@@ -231,6 +271,8 @@ export async function runSyncOnce(
         } catch (err) {
           const message = err instanceof EbayNotConfiguredError ? err.message : (err as Error).message;
           cbFail(db, "EBAY", message);
+          // Task 6: ebay_push_pending stays 1 on affected variants — next run
+          // will recover them automatically even if prices haven't changed.
           logger.error("Sync: failed to push batched updates to eBay — local DB still updated, will retry next cycle", {
             error: message, affectedSkus: batchMeta.map((m) => m.sku),
           });

@@ -34,6 +34,14 @@ let orderRoutingRunning = false;
 let fulfillmentRunning  = false;
 let scoutPullRunning    = false;
 
+// Task 4 — Graceful shutdown: track the currently-running job promise for each
+// scheduler so stopAllSchedulers() can await them before the process exits.
+// Without this, db.close() could fire mid-transaction when SIGTERM arrives.
+let syncInFlight:         Promise<unknown> | null = null;
+let orderRoutingInFlight: Promise<unknown> | null = null;
+let fulfillmentInFlight:  Promise<unknown> | null = null;
+let scoutPullInFlight:    Promise<unknown> | null = null;
+
 function intervalToCronExpression(minutes: number): string {
   const clamped = Math.max(1, Math.min(59, Math.round(minutes)));
   return `*/${clamped} * * * *`;
@@ -55,19 +63,24 @@ export function startSyncScheduler(db: Database.Database, config: CoreConfig): v
       return;
     }
     syncRunning = true;
-    try {
-      // P2-002: read AUTO_ORDER_ENABLED live from DB so dashboard toggle takes
-      // effect on the next tick without a service restart.
-      const summary = await runSyncOnce(db, withLiveAutoOrderEnabled(db, config));
-      logger.info("Sync run complete", summary as unknown as Record<string, unknown>);
-    } catch (err) {
-      // runSyncOnce already catches per-variant errors; this only fires on
-      // something catastrophic (e.g. DB connection lost) — log it and let
-      // the next scheduled tick try again rather than crashing the process.
-      logger.error("Sync run threw unexpectedly — will retry next cycle", { error: (err as Error).message });
-    } finally {
-      syncRunning = false;
-    }
+    const run = (async () => {
+      try {
+        // P2-002: read AUTO_ORDER_ENABLED live from DB so dashboard toggle takes
+        // effect on the next tick without a service restart.
+        const summary = await runSyncOnce(db, withLiveAutoOrderEnabled(db, config));
+        logger.info("Sync run complete", summary as unknown as Record<string, unknown>);
+      } catch (err) {
+        // runSyncOnce already catches per-variant errors; this only fires on
+        // something catastrophic (e.g. DB connection lost) — log it and let
+        // the next scheduled tick try again rather than crashing the process.
+        logger.error("Sync run threw unexpectedly — will retry next cycle", { error: (err as Error).message });
+      } finally {
+        syncRunning = false;
+        syncInFlight = null;
+      }
+    })();
+    syncInFlight = run;
+    await run;
   });
 }
 
@@ -91,15 +104,20 @@ export function startOrderRoutingScheduler(db: Database.Database, config: CoreCo
       return;
     }
     orderRoutingRunning = true;
-    try {
-      // P2-002: live config read
-      const summary = await runOrderRoutingOnce(db, withLiveAutoOrderEnabled(db, config));
-      logger.info("Order routing run complete", summary as unknown as Record<string, unknown>);
-    } catch (err) {
-      logger.error("Order routing run threw unexpectedly — will retry next cycle", { error: (err as Error).message });
-    } finally {
-      orderRoutingRunning = false;
-    }
+    const run = (async () => {
+      try {
+        // P2-002: live config read
+        const summary = await runOrderRoutingOnce(db, withLiveAutoOrderEnabled(db, config));
+        logger.info("Order routing run complete", summary as unknown as Record<string, unknown>);
+      } catch (err) {
+        logger.error("Order routing run threw unexpectedly — will retry next cycle", { error: (err as Error).message });
+      } finally {
+        orderRoutingRunning = false;
+        orderRoutingInFlight = null;
+      }
+    })();
+    orderRoutingInFlight = run;
+    await run;
   });
 }
 
@@ -122,15 +140,20 @@ export function startFulfillmentScheduler(db: Database.Database, config: CoreCon
       return;
     }
     fulfillmentRunning = true;
-    try {
-      // P2-002: live config read
-      const summary = await runFulfillmentOnce(db, withLiveAutoOrderEnabled(db, config));
-      logger.info("Fulfillment run complete", summary as unknown as Record<string, unknown>);
-    } catch (err) {
-      logger.error("Fulfillment run threw unexpectedly — will retry next cycle", { error: (err as Error).message });
-    } finally {
-      fulfillmentRunning = false;
-    }
+    const run = (async () => {
+      try {
+        // P2-002: live config read
+        const summary = await runFulfillmentOnce(db, withLiveAutoOrderEnabled(db, config));
+        logger.info("Fulfillment run complete", summary as unknown as Record<string, unknown>);
+      } catch (err) {
+        logger.error("Fulfillment run threw unexpectedly — will retry next cycle", { error: (err as Error).message });
+      } finally {
+        fulfillmentRunning = false;
+        fulfillmentInFlight = null;
+      }
+    })();
+    fulfillmentInFlight = run;
+    await run;
   });
 }
 
@@ -154,21 +177,35 @@ export function startScoutPullScheduler(db: Database.Database, config: CoreConfi
       return;
     }
     scoutPullRunning = true;
-    try {
-      const summary = await pullFromScout(db, config);
-      logger.info("Scheduled scout pull complete", summary as unknown as Record<string, unknown>);
-    } catch (err) {
-      // pullFromScout is designed to never throw, but this is a final
-      // safety net so a truly unexpected error still can't crash the process.
-      logger.error("Scout pull threw unexpectedly — will retry next cycle", { error: (err as Error).message });
-    } finally {
-      scoutPullRunning = false;
-    }
+    const run = (async () => {
+      try {
+        const summary = await pullFromScout(db, config);
+        logger.info("Scheduled scout pull complete", summary as unknown as Record<string, unknown>);
+      } catch (err) {
+        // pullFromScout is designed to never throw, but this is a final
+        // safety net so a truly unexpected error still can't crash the process.
+        logger.error("Scout pull threw unexpectedly — will retry next cycle", { error: (err as Error).message });
+      } finally {
+        scoutPullRunning = false;
+        scoutPullInFlight = null;
+      }
+    })();
+    scoutPullInFlight = run;
+    await run;
   });
 }
 
-/** Stops all four recurring jobs — used in tests and graceful shutdown. */
-export function stopAllSchedulers(): void {
+/**
+ * Stops all four recurring jobs and returns a Promise that resolves once
+ * any currently in-flight job run completes.
+ *
+ * Task 4 — Graceful shutdown: the caller (index.ts gracefulShutdown) must
+ * await this before closing the DB. Without the await, db.close() could
+ * fire while a job is mid-transaction, causing SQLITE_MISUSE errors or
+ * leaving the WAL file in an inconsistent state.
+ */
+export async function stopAllSchedulers(): Promise<void> {
+  // Stop future ticks immediately
   syncTask?.stop();
   syncTask = null;
   orderRoutingTask?.stop();
@@ -177,4 +214,15 @@ export function stopAllSchedulers(): void {
   fulfillmentTask = null;
   scoutPullTask?.stop();
   scoutPullTask = null;
+
+  // Await any job that fired before stop() was called.
+  // Promise.allSettled so one job hanging doesn't block the others.
+  const inflight = [syncInFlight, orderRoutingInFlight, fulfillmentInFlight, scoutPullInFlight]
+    .filter((p): p is Promise<unknown> => p !== null);
+
+  if (inflight.length > 0) {
+    logger.info(`Graceful shutdown: waiting for ${inflight.length} in-flight job(s) to complete...`);
+    await Promise.allSettled(inflight);
+    logger.info("Graceful shutdown: all in-flight jobs finished.");
+  }
 }

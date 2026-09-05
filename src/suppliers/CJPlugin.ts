@@ -65,14 +65,20 @@ export class CJPlugin implements SupplierProvider {
 
       let res: Response;
       try {
+        // Task 3: 30-second timeout — a hung CJ connection would otherwise
+        // block the entire job cycle indefinitely.
         res = await fetch(url, {
           method,
           headers,
           body: opts.body ? JSON.stringify(opts.body) : undefined,
+          signal: AbortSignal.timeout(30_000),
         });
       } catch (networkErr) {
+        // Task 1/2: network errors (ECONNRESET, ETIMEDOUT, AbortError, etc.)
+        // are transient — mark them retryable so withRetry applies backoff.
+        // Previously these were isRetryable:false which silently dropped retries.
         throw new SupplierApiError("CJ", `Network error calling ${path}: ${(networkErr as Error).message}`, {
-          isRetryable: false,
+          isRetryable: true,
         });
       }
 
@@ -134,14 +140,17 @@ export class CJPlugin implements SupplierProvider {
     const doAuth = async () => {
       let res: Response;
       try {
+        // Task 3: 30-second timeout on auth calls too.
         res = await fetch(`${CJ_BASE_URL}/authentication/getAccessToken`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ apiKey: this.apiKey }),
+          signal: AbortSignal.timeout(30_000),
         });
       } catch (networkErr) {
+        // Task 1: network errors during auth are transient — allow withRetry backoff.
         throw new SupplierApiError("CJ", `Network error during authentication: ${(networkErr as Error).message}`, {
-          isRetryable: false,
+          isRetryable: true,
         });
       }
 

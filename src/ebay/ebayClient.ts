@@ -91,6 +91,8 @@ export class EbayClient {
 
       let res: Response;
       try {
+        // Task 3: 30-second timeout — a hung eBay connection would otherwise
+        // block the entire job cycle indefinitely.
         res = await fetch(url, {
           method,
           headers: {
@@ -99,10 +101,14 @@ export class EbayClient {
             Authorization: `Bearer ${token}`,
           },
           body: opts.body ? JSON.stringify(opts.body) : undefined,
+          signal: AbortSignal.timeout(30_000),
         });
       } catch (networkErr) {
+        // Task 1/2: network errors (ECONNRESET, ETIMEDOUT, AbortError, etc.)
+        // are transient — mark retryable so withRetry applies backoff.
+        // Previously isRetryable:false prevented any retry on network failures.
         throw new SupplierApiError("EBAY", `Network error calling ${path}: ${(networkErr as Error).message}`, {
-          isRetryable: false,
+          isRetryable: true,
         });
       }
 
@@ -124,9 +130,14 @@ export class EbayClient {
       }
 
       if (!res.ok) {
+        // Task 2: 5xx responses are transient server errors — mark retryable
+        // so withRetry applies exponential backoff. Previously all non-429
+        // errors used isRetryable:false, meaning a transient 503 from eBay
+        // would immediately surface as a hard failure instead of retrying.
+        const isServerError = res.status >= 500;
         throw new SupplierApiError("EBAY", `${path} failed (HTTP ${res.status}): ${truncated}`, {
           httpStatus: res.status,
-          isRetryable: false,
+          isRetryable: isServerError,
         });
       }
 

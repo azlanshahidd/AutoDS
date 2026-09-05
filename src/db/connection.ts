@@ -20,5 +20,12 @@ export function getDb(databaseFile: string): Database.Database {
   dbInstance = new Database(databaseFile);
   dbInstance.pragma("journal_mode = WAL");
   dbInstance.pragma("foreign_keys = ON");
+  // Task 7: busy_timeout — SQLite's default is 0ms, meaning any concurrent
+  // write attempt throws SQLITE_BUSY immediately. With WAL mode a reader never
+  // blocks a writer, but two writers (e.g. a cron job tick and a dashboard
+  // PATCH request arriving at the same instant) still serialise. 5 seconds is
+  // enough to let the first writer finish without surfacing spurious errors to
+  // the caller.
+  dbInstance.pragma("busy_timeout = 5000");
   return dbInstance;
 }

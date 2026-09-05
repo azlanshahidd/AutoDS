@@ -180,16 +180,21 @@ function gracefulShutdown(signal: string) {
 
   logger.info(`Received ${signal} — starting graceful shutdown`);
 
-  // Stop the cron schedulers so no new job ticks are queued
-  stopAllSchedulers();
-
-  // Release any DB-level job locks (so a quick restart doesn't have to
-  // wait for the stale-lock timeout)
-  try { releaseAllLocks(db); } catch { /* best-effort */ }
-
-  // Stop accepting new HTTP requests
-  server.close(() => {
+  // Stop accepting new HTTP requests immediately
+  server.close(async () => {
     logger.info("HTTP server closed — all connections drained");
+
+    // Task 4: await any in-flight job runs BEFORE closing the DB.
+    // stopAllSchedulers() now returns a Promise that resolves once running
+    // jobs finish — previously we called it synchronously and db.close()
+    // could fire while a job was mid-transaction.
+    try {
+      await stopAllSchedulers();
+    } catch { /* best-effort — already logged inside */ }
+
+    // Release DB-level locks so a quick restart doesn't wait for stale-lock TTL
+    try { releaseAllLocks(db); } catch { /* best-effort */ }
+
     try { db.close(); } catch { /* ignore */ }
     logger.info("Database closed — exiting cleanly");
     process.exit(0);

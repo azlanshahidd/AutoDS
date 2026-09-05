@@ -15,6 +15,7 @@ import { EbayClient } from "../ebay/ebayClient";
 import { recordJobOutcome } from "../services/alertService";
 import { acquireLock, releaseLock } from "../services/jobLock";
 import { isOpen as cbIsOpen, recordSuccess as cbSuccess, recordFailure as cbFail } from "../services/circuitBreaker";
+import { isOrderQuarantined, recordOrderSuccess, recordOrderFailure } from "../services/orderQuarantine";
 import { logger } from "../logger";
 
 interface OrderRow {
@@ -26,12 +27,13 @@ interface OrderRow {
 }
 
 export interface FulfillmentSummary {
-  candidatesChecked:  number;
-  notYetShipped:      number;
-  fulfilled:          number;
-  failed:             number;
-  skippedCircuitOpen: number;
-  dryRun:             boolean;
+  candidatesChecked:   number;
+  notYetShipped:       number;
+  fulfilled:           number;
+  failed:              number;
+  skippedCircuitOpen:  number;
+  skippedQuarantine:   number;
+  dryRun:              boolean;
   result: "success" | "partial_failure" | "failure";
   errors: Array<{ ebayOrderId: string; message: string }>;
 }
@@ -45,14 +47,15 @@ export async function runFulfillmentOnce(
   const dryRun = opts.dryRun ?? false;
 
   const summary: FulfillmentSummary = {
-    candidatesChecked:  0,
-    notYetShipped:      0,
-    fulfilled:          0,
-    failed:             0,
-    skippedCircuitOpen: 0,
+    candidatesChecked:   0,
+    notYetShipped:       0,
+    fulfilled:           0,
+    failed:              0,
+    skippedCircuitOpen:  0,
+    skippedQuarantine:   0,
     dryRun,
-    result:             "success",
-    errors:             [],
+    result:              "success",
+    errors:              [],
   };
 
   // Task 1: acquire job lock
@@ -65,7 +68,12 @@ export async function runFulfillmentOnce(
 
   try {
     const candidates = db
-      .prepare("SELECT * FROM orders WHERE status = 'submitted' AND supplier_order_id IS NOT NULL")
+      .prepare(
+        // Task 5: exclude quarantined orders — they are permanently broken and
+        // need manual review. The quarantined=0 filter uses the new index on
+        // orders(status) to avoid a full table scan.
+        "SELECT * FROM orders WHERE status = 'submitted' AND supplier_order_id IS NOT NULL AND quarantined = 0"
+      )
       .all() as OrderRow[];
 
     summary.candidatesChecked = candidates.length;
@@ -171,6 +179,9 @@ export async function runFulfillmentOnce(
           ).run(tracking.trackingNumber, tracking.carrier, order.id);
         })();
 
+        // Task 5: reset the failure counter on a successful fulfillment
+        if (!dryRun) recordOrderSuccess(db, order.id);
+
         summary.fulfilled += 1;
         logger.info("Fulfillment: pushed tracking to eBay", {
           ebayOrderId: order.ebay_order_id,
@@ -185,7 +196,10 @@ export async function runFulfillmentOnce(
         logger.error("Fulfillment: order failed, continuing with rest of batch", {
           ebayOrderId: order.ebay_order_id, error: message,
         });
+        // Task 5: record the failure; quarantine if threshold reached
+        if (!dryRun) recordOrderFailure(db, order.id, order.ebay_order_id, message);
         // No status change — order stays 'submitted' and retries next cycle
+        // (unless just quarantined, in which case it will be skipped next cycle)
       }
     }
 

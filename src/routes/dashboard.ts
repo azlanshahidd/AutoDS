@@ -50,6 +50,34 @@ export function dashboardRouter(db: Database.Database): Router {
     }
   });
 
+  // GET /api/overview/setup-status — lightweight check for the onboarding checklist
+  router.get("/overview/setup-status", (_req: Request, res: Response) => {
+    try {
+      const getConfig = (key: string) =>
+        (db.prepare("SELECT value FROM config WHERE key = ?").get(key) as { value: string } | undefined)?.value ?? "";
+
+      const ebayClientId    = getConfig("EBAY_CLIENT_ID");
+      const ebayRefreshToken = getConfig("EBAY_REFRESH_TOKEN");
+
+      const supplierRow = db
+        .prepare("SELECT id FROM suppliers WHERE status = 'connected' LIMIT 1")
+        .get();
+
+      const aiProviderRow = db
+        .prepare("SELECT id FROM ai_providers WHERE enabled = 1 AND status = 'connected' LIMIT 1")
+        .get();
+
+      res.json({
+        ebayConfigured:       Boolean(ebayClientId && ebayRefreshToken),
+        supplierConnected:    Boolean(supplierRow),
+        aiProviderConfigured: Boolean(aiProviderRow),
+      });
+    } catch (err) {
+      logger.error("Failed to load setup status", { error: (err as Error).message });
+      res.status(500).json({ error: "Failed to load setup status." });
+    }
+  });
+
   // GET /api/config/auto-order-enabled
   router.get("/config/auto-order-enabled", (_req: Request, res: Response) => {
     res.json({ enabled: getAutoOrderEnabled(db) });
@@ -82,6 +110,41 @@ export function dashboardRouter(db: Database.Database): Router {
     } catch (err) {
       logger.error("Failed to load products", { error: (err as Error).message });
       res.status(500).json({ error: "Failed to load products." });
+    }
+  });
+
+  // PATCH /api/products/:sku/price — inline price override from the Products table.
+  // Overwrites current_price and sets ebay_push_pending=1 so the next sync cycle
+  // pushes the new price to eBay even if the supplier cost hasn't changed.
+  router.patch("/products/:sku/price", (req: Request, res: Response) => {
+    const { sku } = req.params;
+    const { price } = req.body || {};
+
+    if (typeof price !== "number" || !Number.isFinite(price) || price < 0) {
+      return res.status(400).json({ error: "price must be a non-negative finite number." });
+    }
+    if (price > 100_000) {
+      return res.status(400).json({ error: "price must be below $100,000." });
+    }
+
+    try {
+      const result = db
+        .prepare(
+          `UPDATE variants
+             SET current_price = ?, ebay_push_pending = 1, updated_at = datetime('now')
+           WHERE internal_sku = ?`
+        )
+        .run(Math.round(price * 100) / 100, sku);
+
+      if (result.changes === 0) {
+        return res.status(404).json({ error: `No variant found with SKU "${sku}".` });
+      }
+
+      logger.info("Variant price manually overridden", { sku, price });
+      res.json({ internalSku: sku, currentPrice: Math.round(price * 100) / 100 });
+    } catch (err) {
+      logger.error("Failed to update variant price", { error: (err as Error).message, sku });
+      res.status(500).json({ error: "Failed to update price." });
     }
   });
 

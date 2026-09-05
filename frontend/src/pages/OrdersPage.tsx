@@ -42,7 +42,7 @@ export function OrdersPage() {
             {orders.length} order{orders.length!==1?"s":""}
           </span>
         )} />
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <Card>
           {loading ? (
             <div className="flex justify-center py-16"><div className="h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-cyan"/></div>
@@ -51,16 +51,22 @@ export function OrdersPage() {
           ) : (
             <div className="overflow-x-auto">
               <table className="dt">
-                <thead><tr><th>eBay Order ID</th><th>Supplier Order</th><th>Status</th><th>Tracking</th><th>Created</th></tr></thead>
+                <thead><tr>
+                  <th>eBay Order ID</th>
+                  <th className="hidden sm:table-cell">Supplier Order</th>
+                  <th>Status</th>
+                  <th className="hidden md:table-cell">Tracking</th>
+                  <th>Created</th>
+                </tr></thead>
                 <tbody>
                   {orders.map(o => {
                     const st = sCfg[o.status] ?? { label:o.status, tone:"neutral" as StatusTone };
                     return (
                       <tr key={o.ebay_order_id}>
                         <td className="font-mono text-xs font-semibold text-ink">{o.ebay_order_id}</td>
-                        <td className="font-mono text-xs text-ink-4">{o.supplier_order_id||"—"}</td>
+                        <td className="hidden sm:table-cell font-mono text-xs text-ink-4">{o.supplier_order_id||"—"}</td>
                         <td><StatusBadge label={st.label} tone={st.tone}/></td>
-                        <td className="text-xs text-ink-4">{o.tracking_number ? `${o.carrier?o.carrier+" ":""}${o.tracking_number}` : "—"}</td>
+                        <td className="hidden md:table-cell text-xs text-ink-4">{o.tracking_number ? `${o.carrier?o.carrier+" ":""}${o.tracking_number}` : "—"}</td>
                         <td className="text-xs text-ink-5">{fmt(o.created_at)}</td>
                       </tr>
                     );

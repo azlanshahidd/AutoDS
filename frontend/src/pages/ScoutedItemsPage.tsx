@@ -505,6 +505,9 @@ export function ScoutedItemsPage() {
   const [regenAll,       setRegenAll]       = useState(false);
   const [generatingIds,  setGeneratingIds]  = useState<Set<number>>(new Set());
   const [publishingIds,  setPublishingIds]  = useState<Set<number>>(new Set());
+  // Bulk selection
+  const [selected,       setSelected]       = useState<Set<number>>(new Set());
+  const [bulkActing,     setBulkActing]     = useState(false);
   // AI content modal
   const [aiModalItem,    setAiModalItem]    = useState<ScoutedProduct | null>(null);
   const [aiModalOpen,    setAiModalOpen]    = useState(false);
@@ -603,6 +606,82 @@ export function ScoutedItemsPage() {
     } finally { setRegenAll(false); }
   }
 
+  // ── Bulk action helpers ───────────────────────────────────────────────────
+
+  const pendingItems = items.filter(i => i.status === "pending_review");
+
+  function toggleSelect(id: number) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selected.size === pendingItems.length && pendingItems.length > 0) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(pendingItems.map(i => i.id)));
+    }
+  }
+
+  async function handleBulkApprove() {
+    const ids = [...selected].filter(id => items.find(i => i.id === id)?.status === "pending_review");
+    if (!ids.length) return;
+    setBulkActing(true);
+    let ok = 0;
+    for (const id of ids) {
+      try {
+        await api.approveScouted(id);
+        setItems(p => p.map(i => i.id === id ? { ...i, status: "approved" as const } : i));
+        ok++;
+      } catch { /* continue */ }
+    }
+    setSelected(new Set());
+    setBulkActing(false);
+    showToast(`Approved ${ok} of ${ids.length} item${ids.length !== 1 ? "s" : ""}.`, "success");
+  }
+
+  async function handleBulkDiscard() {
+    const ids = [...selected].filter(id => items.find(i => i.id === id)?.status === "pending_review");
+    if (!ids.length) return;
+    setBulkActing(true);
+    let ok = 0;
+    for (const id of ids) {
+      try {
+        await api.discardScouted(id);
+        setItems(p => p.map(i => i.id === id ? { ...i, status: "discarded" as const } : i));
+        ok++;
+      } catch { /* continue */ }
+    }
+    setSelected(new Set());
+    setBulkActing(false);
+    showToast(`Discarded ${ok} of ${ids.length} item${ids.length !== 1 ? "s" : ""}.`, "info");
+  }
+
+  async function handleBulkGenerateAi() {
+    const ids = [...selected];
+    if (!ids.length) return;
+    setBulkActing(true);
+    let ok = 0;
+    for (const id of ids) {
+      try {
+        const r = await api.generateAiListing(id);
+        const patch = {
+          ai_title: r.aiTitle, ai_description: r.aiDescription,
+          meta_title: r.metaTitle, meta_description: r.metaDescription,
+          meta_generated_at: r.metaGeneratedAt, meta_generation_source: r.metaGenerationSource,
+        };
+        setItems(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i));
+        ok++;
+      } catch { /* continue */ }
+    }
+    setSelected(new Set());
+    setBulkActing(false);
+    showToast(`Generated AI content for ${ok} of ${ids.length} item${ids.length !== 1 ? "s" : ""}.`, "success");
+  }
+
   async function handleGenerateAi(id: number) {
     setGeneratingIds(prev => new Set(prev).add(id));
     try {
@@ -655,7 +734,6 @@ export function ScoutedItemsPage() {
   }
 
   const pending = items.filter(i => i.status === "pending_review").length;
-
   return (
     <div>
       <PageHeader
@@ -701,9 +779,46 @@ export function ScoutedItemsPage() {
               action={<Button onClick={handlePull} disabled={pulling}><Download size={14} />Pull now</Button>} />
           ) : (
             <div className="overflow-x-auto">
+              {/* Bulk action toolbar — visible only when items are selected */}
+              {selected.size > 0 && (
+                <div className="flex items-center gap-2 px-4 py-2.5"
+                  style={{ background: "rgba(6,182,212,0.07)", borderBottom: "1px solid rgba(6,182,212,0.15)" }}>
+                  <span className="text-xs font-semibold text-cyan">
+                    {selected.size} selected
+                  </span>
+                  <div className="h-4 w-px mx-1" style={{ background: "rgba(255,255,255,0.12)" }} />
+                  <Button variant="secondary" size="sm" onClick={handleBulkApprove} disabled={bulkActing}>
+                    <Check size={12} />Approve all
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={handleBulkDiscard} disabled={bulkActing}>
+                    <X size={12} className="text-danger" />Discard all
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={handleBulkGenerateAi} disabled={bulkActing}>
+                    <Sparkles size={12} className="text-cyan" />
+                    {bulkActing ? "Working…" : "Generate AI"}
+                  </Button>
+                  <button
+                    onClick={() => setSelected(new Set())}
+                    className="ml-auto text-xs text-ink-5 hover:text-ink-3"
+                  >
+                    Clear selection
+                  </button>
+                </div>
+              )}
               <table className="dt">
                 <thead>
                   <tr>
+                    <th style={{ width: 36 }}>
+                      {/* Select-all checkbox — only for pending items */}
+                      <input
+                        type="checkbox"
+                        checked={pendingItems.length > 0 && selected.size === pendingItems.length}
+                        ref={el => { if (el) el.indeterminate = selected.size > 0 && selected.size < pendingItems.length; }}
+                        onChange={toggleSelectAll}
+                        className="cursor-pointer accent-cyan"
+                        aria-label="Select all pending"
+                      />
+                    </th>
                     <th>Item</th>
                     <th>Price</th>
                     <th>Supplier match</th>
@@ -727,6 +842,18 @@ export function ScoutedItemsPage() {
 
                     return (
                       <tr key={item.id} className={cn(!isPending && !isApproved && "opacity-50")}>
+                        {/* Checkbox — only for pending items */}
+                        <td style={{ width: 36 }}>
+                          {isPending && (
+                            <input
+                              type="checkbox"
+                              checked={selected.has(item.id)}
+                              onChange={() => toggleSelect(item.id)}
+                              className="cursor-pointer accent-cyan"
+                              onClick={e => e.stopPropagation()}
+                            />
+                          )}
+                        </td>
                         {/* Item name + badges */}
                         <td>
                           <div className="flex items-start gap-2">

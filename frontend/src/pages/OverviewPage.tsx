@@ -4,6 +4,7 @@ import {
   Activity,
   ArrowUpRight, ScrollText,
   Radar,
+  CheckCircle2, Circle, ChevronRight,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/Card";
@@ -14,6 +15,7 @@ import { Modal } from "../components/ui/Modal";
 import { Button } from "../components/ui/Button";
 import { useToast } from "../components/ui/Toast";
 import { api, OverviewStats, OrderRow, LogRow, ApiError } from "../lib/api";
+import { useNotifications } from "../lib/notificationContext";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -319,6 +321,8 @@ function rangeLabel(range: ChartRange, from: Date, to: Date): string {
 
 export function OverviewPage() {
   const { showToast } = useToast();
+  const { push: pushNotification } = useNotifications();
+  const prevFailedRef = useRef(0);
   const [stats,   setStats]   = useState<OverviewStats | null>(null);
   const [orders,  setOrders]  = useState<OrderRow[]>([]);
   const [logs,    setLogs]    = useState<LogRow[]>([]);
@@ -332,6 +336,13 @@ export function OverviewPage() {
   const [customTo,   setCustomTo]   = useState<string>(() => toInputDate(new Date()));
   const [showCustomPicker, setShowCustomPicker] = useState(false);
   const first = useRef(true);
+  // Onboarding checklist
+  const [setupStatus, setSetupStatus] = useState<{
+    ebayConfigured: boolean; supplierConnected: boolean; aiProviderConfigured: boolean;
+  } | null>(null);
+  const [checklistDismissed, setChecklistDismissed] = useState(
+    () => localStorage.getItem("onboarding_dismissed") === "true"
+  );
 
   const load = useCallback(async () => {
     try {
@@ -344,6 +355,16 @@ export function OverviewPage() {
       setOrders(ordersData.orders ?? []);
       setLogs(logsData.logs ?? []);
       setPollOk(true);  // F25+F26: mark poll healthy
+
+      // Push notification when new job failures appear since last poll
+      const newFailed = overviewData.failedJobsLast24h ?? 0;
+      if (newFailed > prevFailedRef.current && prevFailedRef.current >= 0) {
+        pushNotification(
+          `${newFailed} job failure${newFailed !== 1 ? "s" : ""} in the last 24h — check Logs.`,
+          "danger"
+        );
+      }
+      prevFailedRef.current = newFailed;
       // F02: only clear the initial loading spinner once — not on every poll
       if (first.current) { first.current = false; setLoading(false); }
     } catch (err) {
@@ -363,6 +384,13 @@ export function OverviewPage() {
     const id = setInterval(load, 8000);
     return () => clearInterval(id);
   }, [load]);
+
+  // Fetch setup status once on mount (not on every poll)
+  useEffect(() => {
+    api.getSetupStatus()
+      .then(s => setSetupStatus(s))
+      .catch(() => { /* non-fatal */ });
+  }, []);
 
   async function applyToggle(next: boolean) {
     setToggling(true);
@@ -460,6 +488,74 @@ export function OverviewPage() {
           <p style={{ fontSize: "12px", color: "#F59E0B" }}>
             Cannot reach the server — showing last known data. Retrying every 8 seconds.
           </p>
+        </div>
+      )}
+
+      {/* ── Onboarding checklist — shown until dismissed or fully complete ── */}
+      {setupStatus && !checklistDismissed && (
+        !(setupStatus.ebayConfigured && setupStatus.supplierConnected && setupStatus.aiProviderConfigured)
+      ) && (
+        <div className="mb-6 rounded-2xl overflow-hidden"
+          style={{ border: "1px solid rgba(6,182,212,0.20)", background: "rgba(6,182,212,0.05)" }}>
+          <div className="flex items-center justify-between px-5 py-3"
+            style={{ borderBottom: "1px solid rgba(6,182,212,0.12)" }}>
+            <p style={{ fontSize: "13px", fontWeight: 600, color: "#F5F5F7" }}>
+              Setup checklist
+            </p>
+            <button
+              onClick={() => {
+                setChecklistDismissed(true);
+                localStorage.setItem("onboarding_dismissed", "true");
+              }}
+              style={{ fontSize: "11px", color: "#5C606B" }}
+              className="hover:text-ink-3 transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
+          <div className="flex flex-col gap-0 divide-y" style={{ divideColor: "rgba(255,255,255,0.04)" }}>
+            {[
+              {
+                done: setupStatus.ebayConfigured,
+                label: "eBay API credentials",
+                hint: "Add your Client ID, Client Secret and Refresh Token",
+                to: "/settings",
+              },
+              {
+                done: setupStatus.supplierConnected,
+                label: "Supplier connected",
+                hint: "Add and test a CJ or CSV supplier",
+                to: "/suppliers",
+              },
+              {
+                done: setupStatus.aiProviderConfigured,
+                label: "AI provider connected",
+                hint: "Add an OpenAI-compatible, Gemini or Cohere provider",
+                to: "/ai-providers",
+              },
+            ].map(({ done, label, hint, to }) => (
+              <NavLink
+                key={label}
+                to={to}
+                className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-white/[0.03]"
+                style={{ textDecoration: "none" }}
+              >
+                {done
+                  ? <CheckCircle2 size={16} style={{ color: "#22C55E", flexShrink: 0 }} />
+                  : <Circle      size={16} style={{ color: "#3A3D47",  flexShrink: 0 }} />}
+                <div className="flex-1">
+                  <p style={{ fontSize: "12px", fontWeight: 600, color: done ? "#5C606B" : "#C8CCDA",
+                    textDecoration: done ? "line-through" : "none" }}>
+                    {label}
+                  </p>
+                  {!done && (
+                    <p style={{ fontSize: "11px", color: "#5C606B", marginTop: "1px" }}>{hint}</p>
+                  )}
+                </div>
+                {!done && <ChevronRight size={14} style={{ color: "#3A3D47", flexShrink: 0 }} />}
+              </NavLink>
+            ))}
+          </div>
         </div>
       )}
 

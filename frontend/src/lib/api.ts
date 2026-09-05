@@ -388,6 +388,14 @@ export const api = {
 
   getOverview: () => request<OverviewStats>("/api/overview"),
 
+  /** Lightweight setup check — used by the onboarding checklist. */
+  getSetupStatus: () =>
+    request<{
+      ebayConfigured:        boolean;
+      supplierConnected:     boolean;
+      aiProviderConfigured:  boolean;
+    }>("/api/overview/setup-status"),
+
   getAutoOrderEnabled: () => request<{ enabled: boolean }>("/api/config/auto-order-enabled"),
 
   setAutoOrderEnabled: (enabled: boolean) =>
@@ -397,6 +405,13 @@ export const api = {
     }),
 
   listProducts: () => request<{ products: ProductRow[] }>("/api/products"),
+
+  /** Inline price override — sets current_price and flags ebay_push_pending=1. */
+  patchVariantPrice: (sku: string, price: number) =>
+    request<{ internalSku: string; currentPrice: number }>(`/api/products/${encodeURIComponent(sku)}/price`, {
+      method: "PATCH",
+      body: JSON.stringify({ price }),
+    }),
 
   listOrders: () => request<{ orders: OrderRow[] }>("/api/orders"),
 

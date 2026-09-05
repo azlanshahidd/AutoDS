@@ -14,6 +14,7 @@ import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ToastProvider } from "./components/ui/Toast";
 import { SearchProvider } from "./lib/searchContext";
+import { NotificationProvider } from "./lib/notificationContext";
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(hasStoredToken());
@@ -39,21 +40,23 @@ export default function App() {
     <ToastProvider>
       <BrowserRouter>
         <SearchProvider>
-          <AppShell>
-            <Routes>
-              <Route path="/" element={<OverviewPage />} />
-              <Route path="/suppliers" element={<SuppliersPage />} />
-              <Route path="/products" element={<ProductsPage />} />
-              <Route path="/scouted" element={<ScoutedItemsPage />} />
-              <Route path="/orders" element={<OrdersPage />} />
-              <Route path="/logs" element={<LogsPage />} />
-              <Route path="/scrapers" element={<ScrapersPage />} />
-              <Route path="/ai-providers" element={<AiProvidersPage />} />
-              <Route path="/analytics" element={<AnalyticsPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </AppShell>
+          <NotificationProvider>
+            <AppShell>
+              <Routes>
+                <Route path="/" element={<OverviewPage />} />
+                <Route path="/suppliers" element={<SuppliersPage />} />
+                <Route path="/products" element={<ProductsPage />} />
+                <Route path="/scouted" element={<ScoutedItemsPage />} />
+                <Route path="/orders" element={<OrdersPage />} />
+                <Route path="/logs" element={<LogsPage />} />
+                <Route path="/scrapers" element={<ScrapersPage />} />
+                <Route path="/ai-providers" element={<AiProvidersPage />} />
+                <Route path="/analytics" element={<AnalyticsPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </AppShell>
+          </NotificationProvider>
         </SearchProvider>
       </BrowserRouter>
     </ToastProvider>

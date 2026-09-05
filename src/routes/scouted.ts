@@ -411,6 +411,110 @@ export function scoutedRouter(db: Database.Database, config: CoreConfig): Router
     }
   });
 
+  // POST /api/scouted/regenerate-seo — bulk-regenerate SEO fields server-side.
+  // This is the HTTP equivalent of `npm run regenerate-seo`, used by the
+  // dashboard "Regenerate all" button. Runs synchronously up to MAX_SYNC rows;
+  // larger jobs should use the CLI script directly.
+  // Body (all optional): { missingOnly?: boolean; status?: string }
+  //   missingOnly: true (default) → only rows missing meta_title
+  //   status:      filter to a specific status (pending_review|approved|discarded)
+  router.post("/regenerate-seo", async (req: Request, res: Response) => {
+    const { missingOnly = true, status: filterStatus } = req.body || {};
+
+    const VALID_STATUSES = ["pending_review", "approved", "discarded"];
+    if (filterStatus !== undefined && !VALID_STATUSES.includes(filterStatus)) {
+      return res.status(400).json({
+        error: `Invalid status. Must be one of: ${VALID_STATUSES.join(", ")}`,
+      });
+    }
+
+    // Build query
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (missingOnly !== false) {
+      where.push("(meta_title IS NULL OR meta_title = '')");
+    }
+    if (filterStatus) {
+      where.push("status = ?");
+      params.push(filterStatus);
+    }
+    const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+
+    const rows = db
+      .prepare(
+        `SELECT id, title, scraped_price, trend_signal
+         FROM scouted_products ${whereClause} ORDER BY id ASC LIMIT 100`
+      )
+      .all(...params) as Array<{
+        id: number;
+        title: string;
+        scraped_price: number | null;
+        trend_signal: string | null;
+      }>;
+
+    if (rows.length === 0) {
+      return res.json({ queued: 0, message: "No items need SEO regeneration." });
+    }
+
+    const veroBlocklistPath = (
+      db.prepare("SELECT value FROM config WHERE key = 'VERO_BLOCKLIST_PATH'").get() as
+        | { value: string } | undefined
+    )?.value ?? config.veroBlocklistPath;
+
+    // Process rows sequentially (fire-and-forget — respond immediately, log results)
+    res.json({
+      queued: rows.length,
+      message: `Regenerating SEO fields for ${rows.length} item(s) — check logs for results.`,
+    });
+
+    // Async processing after response is sent
+    setImmediate(async () => {
+      let succeeded = 0;
+      let failed = 0;
+      for (const row of rows) {
+        try {
+          const result = await generateListingContent(db, {
+            title:        row.title,
+            scrapedPrice: row.scraped_price,
+            trendSignal:  row.trend_signal,
+          });
+          if (!result) { failed++; continue; }
+
+          const metaVero = checkVeroOnMetaFields(
+            result.metaTitle, result.metaDescription, veroBlocklistPath
+          );
+          if (metaVero.isBlocked) {
+            logger.warn("regenerate-seo route: VeRO blocked", { id: row.id, keywords: metaVero.matchedKeywords });
+            failed++;
+            continue;
+          }
+
+          db.prepare(
+            `UPDATE scouted_products
+               SET ai_title               = COALESCE(ai_title, ?),
+                   ai_description         = COALESCE(ai_description, ?),
+                   meta_title             = ?,
+                   meta_description       = ?,
+                   meta_generated_at      = datetime('now'),
+                   meta_generation_source = ?,
+                   updated_at             = datetime('now')
+             WHERE id = ?`
+          ).run(
+            result.aiTitle, result.aiDescription,
+            result.metaTitle, result.metaDescription,
+            result.generationSource, row.id
+          );
+          succeeded++;
+          await new Promise<void>(r => setTimeout(r, 300)); // gentle rate-limit
+        } catch (err) {
+          logger.error("regenerate-seo route: row failed", { id: row.id, error: (err as Error).message });
+          failed++;
+        }
+      }
+      logger.info("regenerate-seo route: batch complete", { total: rows.length, succeeded, failed });
+    });
+  });
+
   // GET /api/scouted/:id/preview — returns what would be sent to eBay (no side effects)
   router.get("/:id/preview", async (req: Request, res: Response) => {
     const id = parseIntId(req.params.id);

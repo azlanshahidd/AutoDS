@@ -27,6 +27,7 @@ import { recordJobOutcome } from "../services/alertService";
 import { acquireLock, releaseLock } from "../services/jobLock";
 import { isOpen as cbIsOpen, recordSuccess as cbSuccess, recordFailure as cbFail } from "../services/circuitBreaker";
 import { isQuarantined, recordVariantSuccess, recordVariantFailure } from "../services/quarantine";
+import { generateListingContent, checkVeroOnMetaFields } from "../routes/aiService";
 import { logger } from "../logger";
 
 interface VariantRow {
@@ -175,6 +176,78 @@ export async function runSyncOnce(
 
         // Task 5: reset failure counter on success
         if (!dryRun) recordVariantSuccess(db, variant.id);
+
+        // SEO auto-regeneration: when the price changes by more than 5% and
+        // AUTO_REGENERATE_SEO_ON_CHANGE is enabled, re-generate the meta
+        // title/description for any product associated with this variant.
+        // We only trigger on significant price moves (not sub-cent rounding)
+        // to avoid hammering the AI provider on every tiny stock fluctuation.
+        // Fire-and-forget — never block the sync cycle on an AI call.
+        if (
+          !dryRun &&
+          priceChanged &&
+          variant.current_price !== null &&
+          Math.abs(newPrice - variant.current_price) / Math.max(variant.current_price, 0.01) > 0.05
+        ) {
+          const seoAutoRegen = (
+            db.prepare("SELECT value FROM config WHERE key = 'AUTO_REGENERATE_SEO_ON_CHANGE'").get() as
+              | { value: string } | undefined
+          )?.value?.toLowerCase() === "true";
+
+          if (seoAutoRegen) {
+            // Look up the product title for the AI prompt
+            const productRow = db
+              .prepare(
+                `SELECT p.title FROM products p
+                 JOIN variants v ON v.product_id = p.id
+                 WHERE v.id = ?`
+              )
+              .get(variant.id) as { title: string } | undefined;
+
+            if (productRow) {
+              setImmediate(async () => {
+                try {
+                  const result = await generateListingContent(db, {
+                    title:        productRow.title,
+                    scrapedPrice: newPrice,
+                  });
+                  if (!result) return;
+
+                  const veroBlocklistPath = (
+                    db.prepare("SELECT value FROM config WHERE key = 'VERO_BLOCKLIST_PATH'").get() as
+                      | { value: string } | undefined
+                  )?.value ?? config.veroBlocklistPath;
+
+                  const veroCheck = checkVeroOnMetaFields(
+                    result.metaTitle, result.metaDescription, veroBlocklistPath
+                  );
+                  if (veroCheck.isBlocked) return; // silently skip — same as manual flow
+
+                  // Update the product's SEO fields (products table)
+                  db.prepare(
+                    `UPDATE products
+                       SET meta_title       = ?,
+                           meta_description = ?,
+                           updated_at       = datetime('now')
+                     WHERE id = (SELECT product_id FROM variants WHERE id = ?)`
+                  ).run(result.metaTitle, result.metaDescription, variant.id);
+
+                  logger.info("Sync: auto-regenerated SEO meta fields after price change", {
+                    sku: variant.internal_sku,
+                    oldPrice: variant.current_price,
+                    newPrice,
+                    source: result.generationSource,
+                  });
+                } catch (err) {
+                  // Non-fatal — SEO regeneration errors must never surface as sync failures
+                  logger.warn("Sync: SEO auto-regeneration failed (non-fatal)", {
+                    sku: variant.internal_sku, error: (err as Error).message,
+                  });
+                }
+              });
+            }
+          }
+        }
 
         if (!priceChanged && !stockChanged && !costChanged) {
           // Task 6: even when nothing changed, if a previous run set

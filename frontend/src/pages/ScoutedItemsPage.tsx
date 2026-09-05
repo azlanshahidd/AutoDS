@@ -502,6 +502,7 @@ export function ScoutedItemsPage() {
   const [pulling,        setPulling]        = useState(false);
   const [actingId,       setActingId]       = useState<number | null>(null);
   const [clearing,       setClearing]       = useState(false);
+  const [regenAll,       setRegenAll]       = useState(false);
   const [generatingIds,  setGeneratingIds]  = useState<Set<number>>(new Set());
   const [publishingIds,  setPublishingIds]  = useState<Set<number>>(new Set());
   // AI content modal
@@ -591,6 +592,17 @@ export function ScoutedItemsPage() {
     finally { setClearing(false); }
   }
 
+  async function handleRegenAllSeo() {
+    setRegenAll(true);
+    try {
+      const r = await api.regenerateSeoAll({ missingOnly: true });
+      showToast(r.message, "success");
+      // Poll will pick up the updated SEO fields once processing completes
+    } catch (e) {
+      showToast(e instanceof ApiError ? e.message : "SEO regeneration failed.", "danger");
+    } finally { setRegenAll(false); }
+  }
+
   async function handleGenerateAi(id: number) {
     setGeneratingIds(prev => new Set(prev).add(id));
     try {
@@ -658,9 +670,16 @@ export function ScoutedItemsPage() {
               </span>
             )}
             {items.length > 0 && (
-              <Button variant="danger" size="sm" onClick={handleClearAll} disabled={clearing}>
-                <Trash2 size={13} />{clearing ? "Clearing..." : "Clear all"}
-              </Button>
+              <>
+                <Button variant="ghost" size="sm" onClick={handleRegenAllSeo} disabled={regenAll}
+                  title="Regenerate SEO meta fields for all items missing them">
+                  <RefreshCw size={13} className={cn(regenAll && "animate-spin")} />
+                  {regenAll ? "Regenerating…" : "Regen SEO"}
+                </Button>
+                <Button variant="danger" size="sm" onClick={handleClearAll} disabled={clearing}>
+                  <Trash2 size={13} />{clearing ? "Clearing..." : "Clear all"}
+                </Button>
+              </>
             )}
             <Button onClick={handlePull} disabled={pulling}>
               <Download size={14} className={pulling ? "animate-spin" : ""} />

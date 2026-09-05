@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Plug, Package, ShoppingCart, ScrollText,
   Radar, Settings, Satellite, Sparkles, TrendingUp, Bell, Search,
   X, Menu, CheckCircle2, AlertTriangle, Info, Keyboard,
-  ChevronRight,
+  ChevronRight, ShieldAlert, RefreshCw,
 } from "lucide-react";
 import { cn } from "../lib/cn";
 import { useSearch } from "../lib/searchContext";
@@ -12,6 +12,8 @@ import { GlobalSearch } from "./GlobalSearch";
 import { useNotifications, NotificationTone } from "../lib/notificationContext";
 import { useKeyboardNav, KEYBOARD_SHORTCUTS } from "../lib/useKeyboardNav";
 import { Modal } from "./ui/Modal";
+import { api, ApiError } from "../lib/api";
+import { useToast } from "./ui/Toast";
 
 // ── Nav definition ────────────────────────────────────────────────────────────
 
@@ -276,6 +278,81 @@ function KeyboardHelpModal({ open, onClose }: { open: boolean; onClose: () => vo
   );
 }
 
+// ── Emergency Stop banner ─────────────────────────────────────────────────────
+
+/**
+ * Polls GET /api/emergency-stop on mount and every 30 seconds.
+ * When active: shows a full-width red banner with a Resume button.
+ * The banner is shown ABOVE the main layout so it's impossible to miss.
+ */
+function EmergencyStopBanner() {
+  const { showToast } = useToast();
+  const [stopped,   setStopped]   = useState(false);
+  const [stoppedAt, setStoppedAt] = useState<string | null>(null);
+  const [reason,    setReason]    = useState<string | null>(null);
+  const [resuming,  setResuming]  = useState(false);
+
+  useEffect(() => {
+    async function check() {
+      try {
+        const s = await api.getEmergencyStop();
+        setStopped(s.emergencyStopped);
+        setStoppedAt(s.stoppedAt);
+        setReason(s.reason);
+      } catch { /* non-fatal — banner just stays hidden */ }
+    }
+    check();
+    const id = setInterval(check, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!stopped) return null;
+
+  async function handleResume() {
+    setResuming(true);
+    try {
+      await api.resumeFromEmergencyStop();
+      setStopped(false);
+      showToast("Emergency stop cleared. Restart the service to resume automation.", "info");
+    } catch (e) {
+      showToast(e instanceof ApiError ? e.message : "Failed to clear emergency stop.", "danger");
+    } finally {
+      setResuming(false);
+    }
+  }
+
+  const fmtStop = stoppedAt
+    ? new Date(stoppedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : null;
+
+  return (
+    <div
+      className="flex items-center justify-between gap-4 px-6 py-3 shrink-0"
+      style={{ background: "#7F1D1D", borderBottom: "1px solid rgba(239,68,68,0.4)" }}
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <ShieldAlert size={16} className="shrink-0 text-red-300" />
+        <div className="min-w-0">
+          <span className="text-sm font-bold text-red-100">EMERGENCY STOP ACTIVE</span>
+          <span className="ml-2 text-xs text-red-300">
+            All automation is paused.{fmtStop ? ` Stopped at ${fmtStop}.` : ""}
+            {reason ? ` Reason: ${reason}` : ""}
+          </span>
+        </div>
+      </div>
+      <button
+        onClick={handleResume}
+        disabled={resuming}
+        className="flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-60"
+        style={{ background: "rgba(239,68,68,0.25)", border: "1px solid rgba(239,68,68,0.5)", color: "#FCA5A5" }}
+      >
+        {resuming ? <RefreshCw size={12} className="animate-spin" /> : null}
+        {resuming ? "Clearing…" : "Clear & restart service"}
+      </button>
+    </div>
+  );
+}
+
 // ── AppShell ──────────────────────────────────────────────────────────────────
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -321,6 +398,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         {/* ════ MAIN CONTENT ════ */}
         <div className="flex flex-1 flex-col overflow-hidden">
+
+          {/* Emergency stop banner — above everything when active */}
+          <EmergencyStopBanner />
 
           {/* Header */}
           <header

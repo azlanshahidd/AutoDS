@@ -1,43 +1,176 @@
-# VeRO / trademark keyword blocklist (Section 5).
-# One keyword or phrase per line. Case-insensitive, matched on word
-# boundaries. Lines starting with # are comments and ignored.
+# VeRO / trademark keyword blocklist.
+# One keyword or phrase per line. Case-insensitive, word-boundary matched.
+# Lines starting with # are comments and are ignored.
 #
-# This is a STARTER list, not exhaustive — eBay's VeRO (Verified Rights
-# Owner) program covers thousands of brands. Add any brand you're not
-# explicitly licensed/authorized to resell. When in doubt, add it — a
-# false-positive here just means one product needs manual review; a
-# false-negative can get your eBay account suspended.
+# The veroFilter.ts module runs THREE layers of checks:
+#   1. Exact match against this file (word-boundary)
+#   2. Fuzzy/obfuscation detection (normalises 1→i, 0→o, 3→e etc. first)
+#   3. eBay prohibited keywords (hardcoded in veroFilter.ts — weapons, drugs, etc.)
 #
-# See also: https://pages.ebay.com/seller-center/listing-and-marketing/vero-program.html
+# This file covers BRAND VeRO only. You are responsible for ensuring you are
+# authorised to resell any brand before removing it from this list.
+#
+# See: https://pages.ebay.com/seller-center/listing-and-marketing/vero-program.html
 
+# ── Apparel & footwear ────────────────────────────────────────────────────────
 Nike
 Adidas
+Jordan
+Air Jordan
+Yeezy
+Balenciaga
+Off-White
+Supreme
+Bape
+A Bathing Ape
+Palace Skateboards
+Kith
+Stone Island
+CP Company
+Moncler
+Canada Goose
+The North Face
+Patagonia
+Arc'teryx
+Lululemon
+Under Armour
+Reebok
+New Balance
+Puma
+Converse
+Vans
+Timberland
+UGG
+Dr. Martens
+Birkenstock
+Crocs
+Salomon
+
+# ── Luxury fashion ────────────────────────────────────────────────────────────
+Louis Vuitton
+Gucci
+Chanel
+Hermès
+Hermes
+Prada
+Burberry
+Versace
+Givenchy
+Valentino
+Bottega Veneta
+Celine
+Loewe
+Fendi
+Dior
+Christian Dior
+YSL
+Saint Laurent
+Bvlgari
+Bulgari
+Tiffany
+Cartier
+Van Cleef
+Rolex
+Omega
+Patek Philippe
+Audemars Piguet
+Tag Heuer
+Breitling
+
+# ── Electronics & tech ───────────────────────────────────────────────────────
+Apple
+iPhone
+iPad
+MacBook
+AirPods
+Samsung
+Galaxy
+Sony
+PlayStation
+Xbox
+Nintendo
+Pokemon
+Game Boy
+Meta Quest
+Oculus
+Bose
+Beats
+Sonos
+Dyson
+Roomba
+iRobot
+Peloton
+Garmin
+GoPro
+DJI
+Nikon
+Canon
+Leica
+
+# ── Entertainment & media ─────────────────────────────────────────────────────
 Disney
 Marvel
 Star Wars
 Pixar
-Nintendo
-Pokemon
-Apple
-iPhone
-Samsung
-Sony
-PlayStation
-Xbox
-Louis Vuitton
-Gucci
-Chanel
-Rolex
-Supreme
+DC Comics
+Batman
+Superman
+Spider-Man
+Avengers
 Harry Potter
+Hogwarts
+Lord of the Rings
+Game of Thrones
+Pokemon
+Pokémon
+Pikachu
 Hello Kitty
 Sanrio
+Snoopy
+Peanuts
+Care Bears
+My Little Pony
+Transformers
+Hasbro
+Funko Pop
+
+# ── Toys & games ─────────────────────────────────────────────────────────────
 LEGO
 Barbie
 Hot Wheels
+Matchbox
+Nerf
+Monopoly
+Magic The Gathering
+Warhammer
+Games Workshop
+Ravensburger
+Fisher-Price
+
+# ── Sports & leagues ─────────────────────────────────────────────────────────
 NFL
 NBA
 MLB
 NHL
+MLS
 FIFA
+UEFA
+NASCAR
+Formula 1
+F1
 UFC
+WWE
+Manchester United
+Liverpool
+Real Madrid
+Barcelona
+New York Yankees
+Los Angeles Lakers
+
+# ── Automotive ───────────────────────────────────────────────────────────────
+Ferrari
+Lamborghini
+Porsche
+Bentley
+Rolls-Royce
+

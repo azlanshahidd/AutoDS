@@ -301,4 +301,78 @@ export class EbayClient {
       },
     });
   }
+
+  /**
+   * GET /sell/analytics/v1/seller_standards_profile
+   *
+   * Returns the seller's current eBay performance tier and key defect metrics.
+   * These are the numbers eBay uses to decide Top Rated / Above Standard / Below Standard status.
+   *
+   * Metric thresholds for US eBay (as of 2026):
+   *   Transaction Defect Rate:         < 0.5% for Top Rated, < 2% for Above Standard
+   *   Late Shipment Rate:              < 3% for Top Rated, < 10% for Above Standard
+   *   Cases Closed Without Resolution: < 0.3% for both tiers
+   *
+   * Returns null if the Analytics API is unavailable or returns no data,
+   * so callers can degrade gracefully (the seller health panel shows "unavailable").
+   *
+   * Note: This endpoint requires the `sell.analytics.readonly` OAuth scope.
+   * If your refresh token was minted without this scope, add it and re-mint.
+   * The call will fail gracefully (returns null) if the scope is missing.
+   */
+  async getSellerStandards(): Promise<SellerStandardsProfile | null> {
+    try {
+      const data = await this.request<any>(
+        "GET",
+        "/sell/analytics/v1/seller_standards_profile",
+        { context: "getSellerStandards" }
+      );
+
+      if (!data) return null;
+
+      // eBay returns a `standardsProfiles` array; pick the most relevant one.
+      // Cycle: CURRENT (live) or PROJECTED (what would apply now if period ended today)
+      const profiles: any[] = data.standardsProfiles ?? [];
+      const current = profiles.find(p => p.cycle?.cycleType === "CURRENT")
+        ?? profiles[0]
+        ?? null;
+
+      if (!current) return null;
+
+      const metrics: SellerMetric[] = (current.metrics ?? []).map((m: any) => ({
+        name:        m.name ?? "",
+        level:       m.level ?? "UNKNOWN",                    // LOW / HIGH / VERY_HIGH
+        value:       m.rate != null ? Number(m.rate)   : null,
+        basis:       m.basis != null ? Number(m.basis) : null, // total transactions
+      }));
+
+      return {
+        standardsLevel: current.standardsLevel ?? "UNKNOWN", // TOP_RATED / ABOVE_STANDARD / BELOW_STANDARD
+        cycle:          current.cycle?.cycleType ?? "UNKNOWN",
+        evaluationDate: current.evaluationDate ?? null,
+        metrics,
+        raw:            current,
+      };
+    } catch {
+      // Scope missing, API unavailable, or sandbox (which doesn't support analytics)
+      return null;
+    }
+  }
+}
+
+// ── Seller Standards types ────────────────────────────────────────────────────
+
+export interface SellerMetric {
+  name:  string;        // e.g. "TRANSACTION_DEFECT_RATE"
+  level: string;        // LOW | HIGH | VERY_HIGH
+  value: number | null; // the actual rate (0.0 – 1.0)
+  basis: number | null; // denominator (total transactions evaluated)
+}
+
+export interface SellerStandardsProfile {
+  standardsLevel: string;         // TOP_RATED | ABOVE_STANDARD | BELOW_STANDARD
+  cycle:          string;         // CURRENT | PROJECTED
+  evaluationDate: string | null;
+  metrics:        SellerMetric[];
+  raw:            unknown;
 }

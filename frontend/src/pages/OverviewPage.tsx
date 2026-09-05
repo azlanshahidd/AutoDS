@@ -4,7 +4,7 @@ import {
   Activity,
   ArrowUpRight, ScrollText,
   Radar,
-  CheckCircle2, Circle, ChevronRight,
+  CheckCircle2, Circle, ChevronRight, OctagonX, RefreshCw,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/Card";
@@ -343,6 +343,18 @@ export function OverviewPage() {
   const [checklistDismissed, setChecklistDismissed] = useState(
     () => localStorage.getItem("onboarding_dismissed") === "true"
   );
+  // Emergency stop
+  const [emergencyStopActive,  setEmergencyStopActive]  = useState(false);
+  const [emergencyStopping,    setEmergencyStopping]    = useState(false);
+  const [emergencyReason,      setEmergencyReason]      = useState("");
+  const [showEmergencyModal,   setShowEmergencyModal]   = useState(false);
+  // Seller health
+  const [sellerHealth, setSellerHealth] = useState<{
+    profile: { standardsLevel: string; metrics: Array<{ name: string; level: string; value: number | null }> } | null;
+    alertLevel: "ok" | "warning" | "critical";
+    alerts: string[];
+    unavailableReason?: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -390,10 +402,17 @@ export function OverviewPage() {
     api.getSetupStatus()
       .then(s => setSetupStatus(s))
       .catch(() => { /* non-fatal */ });
+    // Fetch emergency stop state
+    api.getEmergencyStop()
+      .then(s => setEmergencyStopActive(s.emergencyStopped))
+      .catch(() => {});
+    // Fetch seller health once (expensive — cached 1h server-side)
+    api.getSellerHealth()
+      .then(h => setSellerHealth(h))
+      .catch(() => {});
   }, []);
 
-  async function applyToggle(next: boolean) {
-    setToggling(true);
+  async function applyToggle(next: boolean) {    setToggling(true);
     try {
       const { enabled } = await api.setAutoOrderEnabled(next);
       setStats(p => p ? { ...p, autoOrderEnabled: enabled } : p);
@@ -401,6 +420,22 @@ export function OverviewPage() {
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : "Failed.", "danger");
     } finally { setToggling(false); setConfirm(false); }
+  }
+
+  async function handleEmergencyStop() {
+    setEmergencyStopping(true);
+    try {
+      await api.triggerEmergencyStop(emergencyReason || undefined);
+      setEmergencyStopActive(true);
+      setShowEmergencyModal(false);
+      pushNotification("EMERGENCY STOP triggered — all automation paused.", "danger");
+      showToast("Emergency stop activated. All schedulers halted.", "danger");
+    } catch (e) {
+      showToast(e instanceof ApiError ? e.message : "Failed.", "danger");
+    } finally {
+      setEmergencyStopping(false);
+      setEmergencyReason("");
+    }
   }
 
   const alerts  = stats?.activeAlerts ?? [];
@@ -463,20 +498,38 @@ export function OverviewPage() {
           </p>
         </div>
         {/* F26: badge colour reflects actual poll health */}
-        <div className="flex items-center gap-2 rounded-full px-3 py-1.5"
-          style={{
-            background: pollOk ? "rgba(34,197,94,0.08)"  : "rgba(245,158,11,0.08)",
-            border:     pollOk ? "1px solid rgba(34,197,94,0.18)" : "1px solid rgba(245,158,11,0.18)",
-          }}>
-          <span className="relative flex h-2 w-2 shrink-0">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60"
-              style={{ background: pollOk ? "#22C55E" : "#F59E0B" }} />
-            <span className="relative inline-flex h-2 w-2 rounded-full"
-              style={{ background: pollOk ? "#22C55E" : "#F59E0B" }} />
-          </span>
-          <span style={{ fontSize: "12px", fontWeight: 500, color: pollOk ? "#22C55E" : "#F59E0B" }}>
-            {pollOk ? "Live · every 8s" : "Reconnecting…"}
-          </span>
+        <div className="flex items-center gap-3">
+          {/* Emergency Stop button */}
+          <button
+            onClick={() => setShowEmergencyModal(true)}
+            disabled={emergencyStopActive}
+            className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-all disabled:opacity-50"
+            style={{
+              background: emergencyStopActive ? "rgba(127,29,29,0.4)" : "rgba(239,68,68,0.12)",
+              border: emergencyStopActive ? "1px solid rgba(239,68,68,0.6)" : "1px solid rgba(239,68,68,0.35)",
+              color: emergencyStopActive ? "#FCA5A5" : "#EF4444",
+            }}
+            title={emergencyStopActive ? "Emergency stop is already active" : "Halt all automation immediately"}
+          >
+            <OctagonX size={13} />
+            {emergencyStopActive ? "STOPPED" : "Emergency Stop"}
+          </button>
+
+          <div className="flex items-center gap-2 rounded-full px-3 py-1.5"
+            style={{
+              background: pollOk ? "rgba(34,197,94,0.08)"  : "rgba(245,158,11,0.08)",
+              border:     pollOk ? "1px solid rgba(34,197,94,0.18)" : "1px solid rgba(245,158,11,0.18)",
+            }}>
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60"
+                style={{ background: pollOk ? "#22C55E" : "#F59E0B" }} />
+              <span className="relative inline-flex h-2 w-2 rounded-full"
+                style={{ background: pollOk ? "#22C55E" : "#F59E0B" }} />
+            </span>
+            <span style={{ fontSize: "12px", fontWeight: 500, color: pollOk ? "#22C55E" : "#F59E0B" }}>
+              {pollOk ? "Live · every 8s" : "Reconnecting…"}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -1002,6 +1055,133 @@ export function OverviewPage() {
           </Button>
         </div>
       </Modal>
+
+      {/* ── Emergency Stop confirmation modal ─────────────────────── */}
+      <Modal
+        open={showEmergencyModal}
+        onClose={() => { setShowEmergencyModal(false); setEmergencyReason(""); }}
+        title="Emergency Stop"
+        description="Immediately halts all automation schedulers"
+        className="max-w-md"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 rounded-xl p-4"
+            style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
+            <OctagonX size={15} className="mt-0.5 shrink-0 text-danger" />
+            <p style={{ fontSize: "13px", color: "#9297A5" }}>
+              This stops the sync, order routing, fulfillment, and scout pull schedulers immediately.
+              The service must be <strong style={{ color: "#C8CCDA" }}>restarted</strong> to resume
+              automation — this is intentional so you can investigate before anything runs again.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-ink-3">Reason (optional — logged for audit)</label>
+            <input
+              type="text"
+              value={emergencyReason}
+              onChange={e => setEmergencyReason(e.target.value)}
+              placeholder="e.g. Suspicious order spike, VeRO notice received"
+              className="input text-sm"
+              maxLength={300}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => { setShowEmergencyModal(false); setEmergencyReason(""); }}>
+              Cancel
+            </Button>
+            <button
+              onClick={handleEmergencyStop}
+              disabled={emergencyStopping}
+              className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all disabled:opacity-60"
+              style={{ background: "#991B1B", border: "1px solid #7F1D1D", color: "#FEE2E2" }}
+            >
+              {emergencyStopping ? <RefreshCw size={13} className="animate-spin" /> : <OctagonX size={13} />}
+              {emergencyStopping ? "Stopping…" : "Stop everything now"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Seller health panel (shown when data available) ────────── */}
+      {sellerHealth && (
+        <div className="mt-6">
+          {sellerHealth.alertLevel !== "ok" && sellerHealth.alerts.length > 0 && (
+            <div className="mb-3 flex items-start gap-3 rounded-2xl px-5 py-4"
+              style={{
+                background: sellerHealth.alertLevel === "critical"
+                  ? "rgba(239,68,68,0.08)" : "rgba(245,158,11,0.07)",
+                border: sellerHealth.alertLevel === "critical"
+                  ? "1px solid rgba(239,68,68,0.25)" : "1px solid rgba(245,158,11,0.18)",
+              }}>
+              <ShieldAlert size={15} className="mt-0.5 shrink-0"
+                style={{ color: sellerHealth.alertLevel === "critical" ? "#EF4444" : "#F59E0B" }} />
+              <div>
+                <p style={{ fontSize: "13px", fontWeight: 600,
+                  color: sellerHealth.alertLevel === "critical" ? "#EF4444" : "#F59E0B" }}>
+                  eBay Seller Account{sellerHealth.alertLevel === "critical" ? " — ACTION REQUIRED" : " Warning"}
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {sellerHealth.alerts.map((a, i) => (
+                    <li key={i} style={{ fontSize: "12px",
+                      color: sellerHealth.alertLevel === "critical"
+                        ? "rgba(239,68,68,0.75)" : "rgba(245,158,11,0.75)" }}>
+                      {a}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+
+          {sellerHealth.profile && (
+            <div className="rounded-2xl px-5 py-4"
+              style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <div className="flex items-center justify-between mb-3">
+                <p style={{ fontSize: "12px", fontWeight: 600, color: "#9297A5", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  eBay Seller Health
+                </p>
+                <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold"
+                  style={{
+                    background: sellerHealth.profile.standardsLevel === "TOP_RATED"
+                      ? "rgba(34,197,94,0.12)" : sellerHealth.profile.standardsLevel === "ABOVE_STANDARD"
+                      ? "rgba(6,182,212,0.12)" : "rgba(239,68,68,0.12)",
+                    color: sellerHealth.profile.standardsLevel === "TOP_RATED"
+                      ? "#22C55E" : sellerHealth.profile.standardsLevel === "ABOVE_STANDARD"
+                      ? "#06B6D4" : "#EF4444",
+                  }}>
+                  {sellerHealth.profile.standardsLevel.replace(/_/g, " ")}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                {sellerHealth.profile.metrics.slice(0, 3).map(m => {
+                  const pct = m.value != null ? (m.value * 100).toFixed(2) + "%" : "—";
+                  const bad = m.level === "HIGH" || m.level === "VERY_HIGH";
+                  return (
+                    <div key={m.name} className="rounded-xl px-3 py-2.5"
+                      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                      <p style={{ fontSize: "10px", color: "#5C606B", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                        {m.name.replace(/_/g, " ").toLowerCase().replace(/^./, c => c.toUpperCase())}
+                      </p>
+                      <p style={{ fontSize: "18px", fontWeight: 700, color: bad ? "#EF4444" : "#F5F5F7", marginTop: "2px" }}>
+                        {pct}
+                      </p>
+                      <p style={{ fontSize: "10px", color: bad ? "#EF4444" : "#5C606B" }}>
+                        {m.level ?? ""}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {!sellerHealth.profile && sellerHealth.unavailableReason && (
+            <p style={{ fontSize: "11px", color: "#3A3D47", textAlign: "right" }}>
+              Seller health unavailable: {sellerHealth.unavailableReason}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

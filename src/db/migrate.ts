@@ -257,6 +257,11 @@ export function applyMigrations(db: Database.Database, config: CoreConfig): stri
     // Analytics: margin floor for alerts. Variants below this % gross margin
     // appear in the Analytics → Margin Alerts panel.
     MARGIN_FLOOR_PERCENT:          "0.10",  // 10% default floor
+    // Emergency stop flag — set to true by POST /api/emergency-stop.
+    // When true, all schedulers remain off until service is restarted.
+    EMERGENCY_STOP:                "false",
+    EMERGENCY_STOP_AT:             "",
+    EMERGENCY_STOP_REASON:         "",
   };
 
   const insertIfMissing = db.prepare(

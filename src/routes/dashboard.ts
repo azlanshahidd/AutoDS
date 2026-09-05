@@ -8,8 +8,10 @@
  */
 import { Router, Request, Response } from "express";
 import Database from "better-sqlite3";
+import { CoreConfig } from "../config";
 import { getOverviewStats } from "../services/overviewService";
 import { getAutoOrderEnabled, setAutoOrderEnabled } from "../services/runtimeConfigService";
+import { buildEbayClient, EbayNotConfiguredError } from "../ebay/ebayFactory";
 import { logger } from "../logger";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -37,7 +39,7 @@ function parseLogType(raw: unknown): LogType | null | "invalid" {
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
-export function dashboardRouter(db: Database.Database): Router {
+export function dashboardRouter(db: Database.Database, config: CoreConfig): Router {
   const router = Router();
 
   // GET /api/overview
@@ -225,6 +227,66 @@ export function dashboardRouter(db: Database.Database): Router {
     } catch (err) {
       logger.error("Failed to clear logs", { error: (err as Error).message });
       res.status(500).json({ error: "Failed to clear logs." });
+    }
+  });
+
+  // GET /api/seller-health — eBay seller performance metrics via Analytics API.
+  // Returns null metrics gracefully when eBay credentials aren't configured,
+  // the sandbox doesn't support Analytics, or the scope is missing.
+  // Results are cached for 1 hour — polling this every 8 seconds would be wasteful
+  // and could hit rate limits. The frontend polls it once on page load.
+  let cachedHealth: unknown = null;
+  let healthCachedAt = 0;
+  const HEALTH_CACHE_MS = 60 * 60 * 1000; // 1 hour
+
+  router.get("/seller-health", async (_req: Request, res: Response) => {
+    // Serve from cache if fresh
+    if (cachedHealth && Date.now() - healthCachedAt < HEALTH_CACHE_MS) {
+      return res.json(cachedHealth);
+    }
+
+    try {
+      const ebayClient = buildEbayClient(config);
+      const profile = await ebayClient.getSellerStandards();
+
+      // Derive alert state from known eBay thresholds
+      let alertLevel: "ok" | "warning" | "critical" = "ok";
+      const alerts: string[] = [];
+
+      if (profile) {
+        for (const m of profile.metrics) {
+          const pct = m.value != null ? m.value * 100 : null;
+          if (pct === null) continue;
+
+          if (m.name === "TRANSACTION_DEFECT_RATE") {
+            if (pct >= 2)   { alertLevel = "critical"; alerts.push(`Transaction defect rate ${pct.toFixed(2)}% ≥ 2% (account at risk)`); }
+            else if (pct >= 0.5) { if (alertLevel !== "critical") alertLevel = "warning"; alerts.push(`Transaction defect rate ${pct.toFixed(2)}% (Top Rated threshold: 0.5%)`); }
+          }
+          if (m.name === "LATE_SHIPMENT_RATE") {
+            if (pct >= 10)  { alertLevel = "critical"; alerts.push(`Late shipment rate ${pct.toFixed(2)}% ≥ 10% (account at risk)`); }
+            else if (pct >= 3)  { if (alertLevel !== "critical") alertLevel = "warning"; alerts.push(`Late shipment rate ${pct.toFixed(2)}% (Top Rated threshold: 3%)`); }
+          }
+          if (m.name === "CASES_CLOSED_WITHOUT_SELLER_RESOLUTION") {
+            if (pct >= 0.3) { alertLevel = "critical"; alerts.push(`Cases closed without resolution ${pct.toFixed(2)}% ≥ 0.3% (account at risk)`); }
+          }
+        }
+
+        if (profile.standardsLevel === "BELOW_STANDARD") {
+          alertLevel = "critical";
+          alerts.unshift("Seller account is BELOW STANDARD — immediate action required.");
+        }
+      }
+
+      const response = { profile, alertLevel, alerts, fetchedAt: new Date().toISOString() };
+      cachedHealth   = response;
+      healthCachedAt = Date.now();
+      res.json(response);
+    } catch (err) {
+      const message = err instanceof EbayNotConfiguredError ? "eBay not configured" : (err as Error).message;
+      const response = { profile: null, alertLevel: "ok" as const, alerts: [], fetchedAt: new Date().toISOString(), unavailableReason: message };
+      cachedHealth   = response;
+      healthCachedAt = Date.now();
+      res.json(response);
     }
   });
 

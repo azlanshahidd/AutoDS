@@ -16,6 +16,7 @@ import { authRouter } from "./routes/auth";
 import { scrapersRouter } from "./routes/scrapers";
 import { aiProvidersRouter } from "./routes/aiProviders";
 import { analyticsRouter } from "./routes/analytics";
+import { emergencyStopRouter } from "./routes/emergencyStop";
 import { releaseAllLocks } from "./services/jobLock";
 import {
   startSyncScheduler,
@@ -136,12 +137,13 @@ apiRouter.use((req, res, next) => {
 
 const suppliersService = new SuppliersService(db, config.encryptionKey);
 apiRouter.use("/suppliers",    suppliersRouter(suppliersService));
-apiRouter.use("/",             dashboardRouter(db));
+apiRouter.use("/",             dashboardRouter(db, config));
 apiRouter.use("/scouted",      scoutedRouter(db, config));
 apiRouter.use("/settings",     settingsRouter(db, config));
 apiRouter.use("/scrapers",     scrapersRouter(db, config.encryptionKey));
 apiRouter.use("/ai-providers", aiProvidersRouter(db));
 apiRouter.use("/analytics",    analyticsRouter(db));
+apiRouter.use("/emergency-stop", emergencyStopRouter(db));
 
 app.use("/api", apiRouter);
 
@@ -162,10 +164,25 @@ const server = app.listen(config.port, config.host, () => {
   logger.info(
     `Core Service listening on http://${config.host}:${config.port}`
   );
-  startSyncScheduler(db, config);
-  startOrderRoutingScheduler(db, config);
-  startFulfillmentScheduler(db, config);
-  startScoutPullScheduler(db, config);
+
+  // Don't start schedulers if an emergency stop is still in effect.
+  // Operator must clear the flag (POST /api/emergency-stop/resume) and
+  // then restart the service to resume automation.
+  const emergencyStopped =
+    (db.prepare("SELECT value FROM config WHERE key = 'EMERGENCY_STOP'").get() as
+      | { value: string } | undefined)?.value?.toLowerCase() === "true";
+
+  if (emergencyStopped) {
+    logger.warn(
+      "EMERGENCY STOP is active — schedulers will NOT start. " +
+      "Clear the flag via POST /api/emergency-stop/resume and restart the service."
+    );
+  } else {
+    startSyncScheduler(db, config);
+    startOrderRoutingScheduler(db, config);
+    startFulfillmentScheduler(db, config);
+    startScoutPullScheduler(db, config);
+  }
 });
 
 // Task 6 — Graceful shutdown: let in-flight jobs finish before exiting.

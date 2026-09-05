@@ -396,6 +396,44 @@ export const api = {
       aiProviderConfigured:  boolean;
     }>("/api/overview/setup-status"),
 
+  // ── Emergency Stop ────────────────────────────────────────────────────────
+
+  getEmergencyStop: () =>
+    request<{
+      emergencyStopped: boolean;
+      autoOrderEnabled:  boolean;
+      stoppedAt:         string | null;
+      reason:            string | null;
+      resumeNote:        string | null;
+    }>("/api/emergency-stop"),
+
+  triggerEmergencyStop: (reason?: string) =>
+    request<{ emergencyStopped: boolean; stoppedAt: string; message: string }>(
+      "/api/emergency-stop",
+      { method: "POST", body: JSON.stringify({ reason: reason ?? "" }) }
+    ),
+
+  resumeFromEmergencyStop: () =>
+    request<{ emergencyStopped: boolean; message: string }>(
+      "/api/emergency-stop/resume",
+      { method: "POST", body: JSON.stringify({}) }
+    ),
+
+  // ── Seller health ─────────────────────────────────────────────────────────
+  getSellerHealth: () =>
+    request<{
+      profile: {
+        standardsLevel: string;
+        cycle:          string;
+        evaluationDate: string | null;
+        metrics: Array<{ name: string; level: string; value: number | null; basis: number | null }>;
+      } | null;
+      alertLevel:        "ok" | "warning" | "critical";
+      alerts:            string[];
+      fetchedAt:         string;
+      unavailableReason?: string;
+    }>("/api/seller-health"),
+
   getAutoOrderEnabled: () => request<{ enabled: boolean }>("/api/config/auto-order-enabled"),
 
   setAutoOrderEnabled: (enabled: boolean) =>

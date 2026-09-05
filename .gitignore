@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build output
+dist/
+frontend/dist/
+
+# Environment files — never commit real secrets
+.env
+.env.local
+# .env.example and .env.staging ARE committed (they contain no real secrets)
+
+# Database files — live data stays out of git
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.db-backup-*
+
+# Log files
+logs/*.log
+logs/*.log.*
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

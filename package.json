@@ -1,0 +1,45 @@
+{
+  "name": "core-service",
+  "version": "0.1.0",
+  "description": "Core Service - CJ Dropshipping <-> eBay automation engine",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:backend": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "tsc -p tsconfig.json && mkdir -p dist/db && cp src/db/schema.sql dist/db/schema.sql",
+    "build:frontend": "npm --prefix frontend run build",
+    "start": "node dist/index.js",
+    "postinstall": "npm --prefix frontend install",
+    "migrate": "ts-node --transpile-only src/db/migrate.ts",
+    "fetch-variant": "ts-node --transpile-only src/suppliers/fetchVariant.ts",
+    "ebay-create-location": "ts-node --transpile-only src/ebay/createEbayLocation.ts",
+    "publish-listing": "ts-node --transpile-only src/ebay/publishListing.ts",
+    "test-pricing-vero": "ts-node --transpile-only src/ebay/testPricingAndVero.ts",
+    "sync-once": "ts-node --transpile-only src/jobs/syncOnce.ts",
+    "order-routing-once": "ts-node --transpile-only src/jobs/orderRoutingOnce.ts",
+    "fulfillment-once": "ts-node --transpile-only src/jobs/fulfillmentOnce.ts",
+    "scout-pull-once": "ts-node --transpile-only src/jobs/scoutPullOnce.ts",
+    "regenerate-seo": "ts-node --transpile-only src/jobs/regenerateSeo.ts"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "dotenv": "^16.4.5",
+    "winston": "^3.13.0",
+    "better-sqlite3": "^11.3.0",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "concurrently": "^8.2.2",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.15",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node-cron": "^3.0.11"
+  },
+  "allowScripts": {
+    "better-sqlite3@11.10.0": true
+  }
+}

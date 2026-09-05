@@ -1,0 +1,43 @@
+# VeRO / trademark keyword blocklist (Section 5).
+# One keyword or phrase per line. Case-insensitive, matched on word
+# boundaries. Lines starting with # are comments and ignored.
+#
+# This is a STARTER list, not exhaustive — eBay's VeRO (Verified Rights
+# Owner) program covers thousands of brands. Add any brand you're not
+# explicitly licensed/authorized to resell. When in doubt, add it — a
+# false-positive here just means one product needs manual review; a
+# false-negative can get your eBay account suspended.
+#
+# See also: https://pages.ebay.com/seller-center/listing-and-marketing/vero-program.html
+
+Nike
+Adidas
+Disney
+Marvel
+Star Wars
+Pixar
+Nintendo
+Pokemon
+Apple
+iPhone
+Samsung
+Sony
+PlayStation
+Xbox
+Louis Vuitton
+Gucci
+Chanel
+Rolex
+Supreme
+Harry Potter
+Hello Kitty
+Sanrio
+LEGO
+Barbie
+Hot Wheels
+NFL
+NBA
+MLB
+NHL
+FIFA
+UFC

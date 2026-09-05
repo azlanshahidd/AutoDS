@@ -1,0 +1,20 @@
+[
+  {
+    "variantId": "SKU-001",
+    "title": "Example Widget — Blue",
+    "cost": 8.50,
+    "shippingCost": 2.00,
+    "stock": 100,
+    "images": ["https://example.com/widget-blue.jpg"],
+    "description": "A sample product entry. Copy this file to csv-supplier-catalogue.json and replace with your real variants."
+  },
+  {
+    "variantId": "SKU-002",
+    "title": "Example Widget — Red",
+    "cost": 8.50,
+    "shippingCost": 2.00,
+    "stock": 45,
+    "images": [],
+    "description": "Another sample variant."
+  }
+]

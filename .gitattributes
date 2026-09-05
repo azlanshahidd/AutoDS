@@ -1,0 +1,10 @@
+# Normalize line endings: always store LF in the repo, checkout as-is on Windows
+* text=auto eol=lf
+
+# Binary files — never convert
+*.db       binary
+*.db-shm   binary
+*.db-wal   binary
+*.png      binary
+*.jpg      binary
+*.ico      binary

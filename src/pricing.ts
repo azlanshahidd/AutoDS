@@ -74,6 +74,12 @@ export function calculateEbayPrice(inputs: PricingInputs): number {
     tiers,
   } = inputs;
 
+  /**
+   * Why we throw instead of returning 0: a negative cost input is almost
+   * certainly a data error (e.g. a supplier API returning a null that got
+   * coerced to -1). Silently pricing at $0 would create a real eBay listing
+   * at $0. Throwing surfaces the problem immediately in the sync log.
+   */
   if (supplierUnitCost < 0 || supplierShippingCost < 0) {
     throw new Error("Pricing inputs cannot be negative.");
   }
@@ -82,18 +88,30 @@ export function calculateEbayPrice(inputs: PricingInputs): number {
 
   // ── 1. Resolve effective fee ──────────────────────────────────────────────
   // Per-supplier override wins over global; no tier override for fee.
+  // Rationale: eBay fees don't vary by item cost; they're flat platform costs.
   const effectiveFee =
     supplierFeeOverride != null ? supplierFeeOverride : ebayFeeEstimate;
 
   // ── 2. Resolve effective margin ───────────────────────────────────────────
   // Priority: matching tier > per-supplier override > global margin.
+  //
+  // Why this order?
+  //   - Tiers are cost-bracket rules ("cheap items need higher margin").
+  //     They should win over everything else because they encode the most
+  //     specific pricing knowledge about the item.
+  //   - Per-supplier overrides encode knowledge about a specific supplier's
+  //     reliability/margins. They should win over the global default.
+  //   - Global margin is the catch-all fallback.
   let effectiveMargin = supplierMarginOverride != null
     ? supplierMarginOverride
     : profitMarginPercent;
   let flatMarkup = 0;
 
   if (tiers && tiers.length > 0) {
-    // Sort ascending by maxCost so we find the lowest matching tier
+    // Sort ascending by maxCost so we find the lowest matching tier.
+    // "Lowest matching" = first tier whose maxCost ≥ totalCost.
+    // This means tiers define UPPER bounds, not ranges:
+    //   { maxCost: 10 } = "apply when totalCost ≤ $10"
     const sorted = [...tiers].sort((a, b) => a.maxCost - b.maxCost);
     const matchedTier = sorted.find((t) => totalCost <= t.maxCost);
     if (matchedTier) {
@@ -105,8 +123,16 @@ export function calculateEbayPrice(inputs: PricingInputs): number {
   }
 
   // ── 3. Apply formula ──────────────────────────────────────────────────────
+  //
+  //   price = (unitCost + shippingCost) × (1 + margin) + fee + flatMarkup
+  //
+  // Note: fee and flatMarkup are added AFTER the margin multiplication.
+  // This is intentional — we want margin on the supplier cost, not on
+  // eBay's fees (which we don't control and don't profit from).
   const raw = totalCost * (1 + effectiveMargin) + effectiveFee + flatMarkup;
 
+  // Round to 2 decimal places to avoid floating-point noise in eBay's API
+  // (e.g. $12.999999999 becomes $13.00).
   return Math.round(raw * 100) / 100;
 }
 

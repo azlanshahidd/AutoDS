@@ -3,6 +3,7 @@ import crypto from "crypto"; // BUG-014: top-level import, not inline require()
 import express from "express";
 import path from "path";
 import fs from "fs";
+import swaggerUi from "swagger-ui-express";
 import { logger } from "./logger";
 import { loadConfig, ConfigError } from "./config";
 import { getDb } from "./db/connection";
@@ -25,6 +26,7 @@ import {
   startScoutPullScheduler,
   stopAllSchedulers,
 } from "./jobs/scheduler";
+import openApiSpec from "./openapi";
 
 let config;
 try {
@@ -98,6 +100,16 @@ try {
   );
   process.exit(1);
 }
+
+// ── Interactive API docs (public — no auth required) ─────────────────────────
+// Served at /api-docs (Swagger UI) and /api-docs/spec.json (raw spec).
+// Intentionally public so it works without logging in — the spec itself
+// contains no secrets, and interactive testing still requires an auth token.
+app.get("/api-docs/spec.json", (_req, res) => res.json(openApiSpec));
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(openApiSpec, {
+  customSiteTitle: "Core Service API Docs",
+  swaggerOptions: { persistAuthorization: true },
+}));
 
 // Public auth route
 app.use("/api/auth", authRouter(db));

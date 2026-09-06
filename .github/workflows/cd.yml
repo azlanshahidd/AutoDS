@@ -82,14 +82,20 @@ jobs:
       url: https://your-staging-service.railway.app   # update with your real URL
 
     steps:
-      - name: Trigger Railway staging redeploy
+      - name: Trigger staging redeploy
         run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "⚠️  RAILWAY_STAGING_DEPLOY_HOOK secret not set — skipping deploy trigger."
+            exit 0
+          fi
           echo "Deploying commit ${{ github.sha }} to staging..."
-          curl -s -X POST "${{ secrets.RAILWAY_STAGING_DEPLOY_HOOK }}" \
+          curl -s -X POST "$DEPLOY_HOOK" \
             -H "Content-Type: application/json" \
             -d '{}' \
             --fail-with-body
           echo "Staging deploy triggered."
+        env:
+          DEPLOY_HOOK: ${{ secrets.RAILWAY_STAGING_DEPLOY_HOOK }}
 
   # ── Production deploy (manual approval required) ──────────────────────────
   deploy-production:
@@ -114,10 +120,16 @@ jobs:
           echo "Deploying ${{ github.ref }} to PRODUCTION."
           echo "Approved by: ${{ github.actor }}"
 
-      - name: Trigger Railway production redeploy
+      - name: Trigger production redeploy
         run: |
-          curl -s -X POST "${{ secrets.RAILWAY_PROD_DEPLOY_HOOK }}" \
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "⚠️  RAILWAY_PROD_DEPLOY_HOOK secret not set — skipping deploy trigger."
+            exit 0
+          fi
+          curl -s -X POST "$DEPLOY_HOOK" \
             -H "Content-Type: application/json" \
             -d '{}' \
             --fail-with-body
           echo "Production deploy triggered."
+        env:
+          DEPLOY_HOOK: ${{ secrets.RAILWAY_PROD_DEPLOY_HOOK }}
